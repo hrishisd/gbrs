@@ -24,7 +24,7 @@ pub struct Registers {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Represents the 8-bit registers
+/// Identifies one of the 8-bit registers
 pub enum R8 {
     A,
     B,
@@ -36,13 +36,14 @@ pub enum R8 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Represents the 16-bit registers
+/// Identifies one of the 16-bit registers
 pub enum R16 {
     AF,
     BC,
     DE,
     /// Functions as a 16-bit register that can be used to point to addresses in memory.
     HL,
+    SP,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,28 +114,51 @@ impl Registers {
         u16::from_be_bytes([self.h, self.l])
     }
 
+    pub fn set_r16(&mut self, r: R16, word: u16) {
+        let [hi, lo] = word.to_be_bytes();
+        match r {
+            R16::AF => {
+                self.a = hi;
+                self.f = lo;
+            }
+            R16::BC => {
+                self.b = hi;
+                self.c = lo;
+            }
+            R16::DE => {
+                self.d = hi;
+                self.e = lo;
+            }
+            R16::HL => {
+                self.h = hi;
+                self.l = lo;
+            }
+            R16::SP => self.sp = word,
+        }
+    }
+
     pub fn set_af(&mut self, word: u16) {
         let [hi, lo] = word.to_be_bytes();
-        let a = hi;
-        let f = lo;
+        self.a = hi;
+        self.f = lo;
     }
 
     pub fn set_bc(&mut self, word: u16) {
         let [hi, lo] = word.to_be_bytes();
-        let b = hi;
-        let c = lo;
+        self.b = hi;
+        self.c = lo;
     }
 
     pub fn set_de(&mut self, word: u16) {
         let [hi, lo] = word.to_be_bytes();
-        let d = hi;
-        let e = lo;
+        self.d = hi;
+        self.e = lo;
     }
 
     pub fn set_hl(&mut self, word: u16) {
         let [hi, lo] = word.to_be_bytes();
-        let h = hi;
-        let l = lo;
+        self.h = hi;
+        self.l = lo;
     }
 
     pub fn get_flag(&self, flag: Flag) -> bool {

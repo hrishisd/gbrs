@@ -1,6 +1,7 @@
-pub struct MMU {}
+#![allow(unused)]
+pub struct Mmu {}
 
-impl MMU {
+impl Mmu {
     pub fn read_byte(&self, addr: u16) -> u8 {
         todo!()
     }
