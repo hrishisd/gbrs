@@ -701,12 +701,16 @@ impl Cpu {
 
     /// LD r8,r8
     pub fn ld_r8_r8(&mut self, dest: R8, src: R8) -> u8 {
-        todo!()
+        self.regs.set_r8(dest, self.regs.r8(src));
+        4
     }
 
     /// LD r8,n8
     pub fn ld_r8_n8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let imm = self.mmu.read_byte(self.regs.pc);
+        self.regs.pc += 1;
+        self.regs.set_r8(reg, imm);
+        8
     }
 
     /// LD r16,n16
@@ -720,57 +724,75 @@ impl Cpu {
 
     /// LD \[HL\],r8
     pub fn ld_ref_hl_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        self.mmu.write_byte(self.regs.hl(), self.regs.r8(reg));
+        8
     }
 
     /// LD \[HL\],n8
     pub fn ld_ref_hl_n8(&mut self) -> u8 {
-        todo!()
+        let imm = self.mmu.read_byte(self.regs.pc);
+        self.regs.pc += 1;
+        self.mmu.write_byte(self.regs.hl(), imm);
+        12
     }
 
     /// LD r8,\[HL\]
     pub fn ld_r8_ref_hl(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// LD \[r16\],A
     pub fn ld_ref_r16_a(&mut self, reg: R16) -> u8 {
-        todo!()
+        self.mmu.write_byte(self.regs.r16(reg), self.regs.a);
+        8
     }
 
     /// LD \[n16\],A
     pub fn ld_ref_n16_a(&mut self) -> u8 {
-        todo!()
+        let addr = self.mmu.read_word(self.regs.pc);
+        self.regs.pc += 2;
+        self.mmu.write_byte(addr, self.regs.a);
+        16
     }
 
     /// LDH \[n16\],A
     pub fn ldh_ref_n16_a(&mut self) -> u8 {
-        todo!()
+        todo!("Unclear how this instruction should be implemented from docs")
     }
 
     /// LDH \[C\],A
     pub fn ldh_ref_c_a(&mut self) -> u8 {
-        todo!()
+        let addr = 0xFF00 + (self.regs.c as u16);
+        self.mmu.write_byte(addr, self.regs.a);
+        8
     }
 
     /// LD A,\[r16\]
     pub fn ld_a_ref_r16(&mut self, reg: R16) -> u8 {
-        todo!()
+        self.regs.a = self.mmu.read_byte(self.regs.r16(reg));
+        8
     }
 
     /// LD A,\[n16\]
     pub fn ld_a_ref_n16(&mut self) -> u8 {
-        todo!()
+        let addr = self.mmu.read_word(self.regs.pc);
+        self.regs.pc += 2;
+        self.regs.a = self.mmu.read_byte(addr);
+        16
     }
 
     /// LDH A,\[n16\]
     pub fn ldh_a_ref_n16(&mut self, addr: u8) -> u8 {
-        todo!()
+        todo!("Unclear how this instruction should be implemented from docs")
     }
 
     /// LDH A,\[C\]
     pub fn ldh_a_ref_c(&mut self) -> u8 {
-        todo!()
+        let addr = 0xFF00 + self.regs.c as u16;
+        self.regs.a = self.mmu.read_byte(addr);
+        8
     }
 
     /// LD \[HLI\],A
@@ -789,12 +811,16 @@ impl Cpu {
 
     /// LD A,\[HLI\]
     pub fn ld_a_ref_hli(&mut self) -> u8 {
-        todo!()
+        self.ld_a_ref_r16(R16::HL);
+        self.regs.set_hl(self.regs.hl().wrapping_add(1));
+        8
     }
 
     /// LD A,\[HLD\]
     pub fn ld_a_ref_hld(&mut self) -> u8 {
-        todo!()
+        self.ld_a_ref_r16(R16::HL);
+        self.regs.set_hl(self.regs.hl().wrapping_sub(1));
+        8
     }
 
     // --- Jumps and Subroutines ---
