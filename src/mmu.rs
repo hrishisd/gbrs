@@ -2,6 +2,10 @@
 pub struct Mmu {}
 
 impl Mmu {
+    pub fn create() -> Self {
+        Mmu {}
+    }
+
     pub fn read_byte(&self, addr: u16) -> u8 {
         todo!()
     }

@@ -12,6 +12,12 @@ struct Cpu {
 }
 
 impl Cpu {
+    fn create() -> Self {
+        Cpu {
+            regs: Registers::create(),
+            mmu: Mmu::create(),
+        }
+    }
     /// Fetch and decode a single instruction.
     ///
     /// Decodes the instruction pointed to be the current instruction pointer.

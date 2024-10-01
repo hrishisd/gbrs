@@ -74,7 +74,8 @@ impl Registers {
         }
     }
 
-    pub fn read(&self, reg: R8) -> u8 {
+    /// Read the value from an 8-bit register.
+    pub fn r8(&self, reg: R8) -> u8 {
         match reg {
             R8::A => self.a,
             R8::B => self.b,
@@ -86,7 +87,8 @@ impl Registers {
         }
     }
 
-    pub fn write(&mut self, reg: R8, val: u8) {
+    /// Set the value of an 8-bit register.
+    pub fn set_r8(&mut self, reg: R8, val: u8) {
         match reg {
             R8::A => self.a = val,
             R8::B => self.b = val,
@@ -112,6 +114,17 @@ impl Registers {
 
     pub fn hl(&self) -> u16 {
         u16::from_be_bytes([self.h, self.l])
+    }
+
+    pub fn r16(&self, r: R16) -> u16 {
+        let (hi, lo) = match r {
+            R16::AF => (self.a, self.f),
+            R16::BC => (self.b, self.c),
+            R16::DE => (self.d, self.e),
+            R16::HL => (self.h, self.l),
+            R16::SP => return self.sp,
+        };
+        return u16::from_be_bytes([hi, lo]);
     }
 
     pub fn set_r16(&mut self, r: R16, word: u16) {
@@ -161,7 +174,7 @@ impl Registers {
         self.l = lo;
     }
 
-    pub fn get_flag(&self, flag: Flag) -> bool {
+    pub fn flag(&self, flag: Flag) -> bool {
         let shift = match flag {
             Flag::Z => 7,
             Flag::N => 6,
@@ -196,11 +209,11 @@ mod tests {
         use Flag::*;
         let mut regs = Registers::create();
         for flag in [Z, N, H, C] {
-            assert_eq!(regs.get_flag(flag), false);
+            assert_eq!(regs.flag(flag), false);
             regs.set_flag(flag, true);
-            assert!(regs.get_flag(flag));
+            assert!(regs.flag(flag));
             regs.set_flag(flag, false);
-            assert_eq!(regs.get_flag(flag), false);
+            assert_eq!(regs.flag(flag), false);
         }
     }
 }

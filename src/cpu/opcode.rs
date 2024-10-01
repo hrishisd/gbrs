@@ -27,43 +27,45 @@ pub enum CC {
 }
 
 /// Implementation of the unique types of cpu instructions.
-/// Each function simulates the execution of an instruction and returns the number of T-cycles it takes
+///
+/// Each function simulates the execution of an instruction and returns the number of T-cycles it takes. e.g. [Cpu::nop] returns 4.
 impl Cpu {
     // TODO: its possible that I can inline the register A as the argument to most of the arithmetic functions...
 
     // --- 8-bit Arithmetic and Logic Instructions
 
-    /// Add the 8-bit values and the carry flag, set flags, and return the result
-    fn alu_adc(&mut self, x: u8, y: u8) -> u8 {
-        self.alu_add(x, y, self.regs.get_flag(Flag::C))
+    /// Add the value and carry flag to A, and set flags accordingly
+    fn alu_adc(&mut self, x: u8) {
+        self.alu_add(x, self.regs.flag(Flag::C));
     }
 
-    /// Add the 8-bit values and the carry bit, set flags, and return the result
-    fn alu_add(&mut self, x: u8, y: u8, carry: bool) -> u8 {
+    /// Add the value and carry bit to A, and set flags accordingly
+    fn alu_add(&mut self, x: u8, carry: bool) {
         use Flag::*;
-        let carry = self.regs.get_flag(C) as u8;
-        let result = x
-            .wrapping_add(y)
-            .wrapping_add(self.regs.get_flag(Flag::C) as u8);
+        let carry = self.regs.flag(C) as u8;
+        let a = self.regs.a;
+        let result = a
+            .wrapping_add(x)
+            .wrapping_add(self.regs.flag(Flag::C) as u8);
 
         self.regs.set_flag(Z, result == 0);
         self.regs.set_flag(N, false);
         self.regs
-            .set_flag(C, (x as u16 + y as u16 + carry as u16) > (u8::MAX as u16));
+            .set_flag(C, (a as u16 + x as u16 + carry as u16) > (u8::MAX as u16));
         self.regs
-            .set_flag(H, (x & 0x0f) + (y & 0x0f) + carry > 0x0f);
-        result
+            .set_flag(H, (a & 0x0f) + (x & 0x0f) + carry > 0x0f);
+        self.regs.a = result;
     }
 
     /// ADC A,r8
     pub fn adc_a_r8(&mut self, r: R8) -> u8 {
-        self.regs.a = self.alu_adc(self.regs.a, self.regs.read(r));
+        self.alu_adc(self.regs.r8(r));
         4
     }
 
     /// ADC A,\[HL\]
     pub fn adc_a_ref_hl(&mut self) -> u8 {
-        self.regs.a = self.alu_adc(self.regs.a, self.mmu.read_byte(self.regs.hl()));
+        self.alu_adc(self.mmu.read_byte(self.regs.hl()));
         8
     }
 
@@ -71,19 +73,19 @@ impl Cpu {
     pub fn adc_a_n8(&mut self) -> u8 {
         let imm = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
-        self.regs.a = self.alu_adc(self.regs.a, imm);
+        self.alu_adc(imm);
         8
     }
 
     /// ADD A,r8
     pub fn add_a_r8(&mut self, r: R8) -> u8 {
-        self.regs.a = self.alu_add(self.regs.a, self.regs.read(r), false);
+        self.alu_add(self.regs.r8(r), false);
         4
     }
 
     /// ADD A,\[HL\]
     pub fn add_a_ref_hl(&mut self) -> u8 {
-        self.regs.a = self.alu_add(self.regs.a, self.mmu.read_byte(self.regs.hl()), false);
+        self.alu_add(self.mmu.read_byte(self.regs.hl()), false);
         8
     }
 
@@ -91,30 +93,29 @@ impl Cpu {
     pub fn add_a_n8(&mut self) -> u8 {
         let imm = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
-        self.regs.a = self.alu_add(self.regs.a, imm, false);
+        self.alu_add(imm, false);
         8
     }
 
-    /// AND the 8-bit values, set flags, and return the result
-    fn alu_and(&mut self, x: u8, y: u8) -> u8 {
+    /// AND the value with A, and set flags
+    fn alu_and(&mut self, x: u8) {
         use Flag::*;
-        let result = x & y;
-        self.regs.set_flag(Z, result == 0);
+        self.regs.a = self.regs.a & x;
+        self.regs.set_flag(Z, self.regs.a == 0);
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, true);
         self.regs.set_flag(C, false);
-        result
     }
 
     /// AND A,r8
     pub fn and_a_r8(&mut self, r: R8) -> u8 {
-        self.regs.a = self.alu_and(self.regs.a, self.regs.read(r));
+        self.alu_and(self.regs.r8(r));
         4
     }
 
     /// AND A,\[HL\]
     pub fn and_a_ref_hl(&mut self) -> u8 {
-        self.regs.a = self.alu_and(self.regs.a, self.mmu.read_byte(self.regs.hl()));
+        self.alu_and(self.mmu.read_byte(self.regs.hl()));
         8
     }
 
@@ -122,36 +123,41 @@ impl Cpu {
     pub fn and_a_n8(&mut self) -> u8 {
         let imm = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
-        self.regs.a = self.alu_and(self.regs.a, imm);
+        self.alu_and(imm);
         8
     }
 
-    /// Subtract the carry flag and y from x, set flags accordingly, and return the result
-    fn alu_sub(&mut self, x: u8, y: u8, carry: bool) -> u8 {
+    /// Subtract the carry flag and y from A, set flags accordingly, and return the result
+    fn alu_sub(&mut self, x: u8, carry: bool) {
         use Flag::*;
-        let result = x.wrapping_sub(y).wrapping_sub(carry as u8);
+        let a = self.regs.a;
+        let result = a.wrapping_sub(x).wrapping_sub(carry as u8);
         self.regs.set_flag(Z, result == 0);
         self.regs.set_flag(N, true);
         self.regs.set_flag(
             H,
-            (x & 0x0f).wrapping_sub(y & 0xf).wrapping_sub(carry as u8) & 0x10 != 0,
+            (a & 0x0f).wrapping_sub(x & 0xf).wrapping_sub(carry as u8) & 0x10 != 0,
         );
-        self.regs.set_flag(C, y as u16 + carry as u16 > x as u16);
-        result
+        self.regs.set_flag(C, x as u16 + carry as u16 > a as u16);
+        self.regs.a = result;
+    }
+
+    /// Subtract the value from A and set flags accordingly, but don't store the result. This is useful for ComParing values
+    fn alu_cp(&mut self, x: u8) {
+        let prev_val = self.regs.a;
+        self.alu_sub(x, false);
+        self.regs.a = prev_val;
     }
 
     /// CP A,r8
-    ///
-    /// Subtract the value in r8 from A and set flags accordingly, but don't store the result.
-    /// This is useful for ComParing values.
     pub fn cp_a_r8(&mut self, r: R8) -> u8 {
-        self.alu_sub(self.regs.a, self.regs.read(r), false);
+        self.alu_cp(self.regs.r8(r));
         4
     }
 
     /// CP A,\[HL\]
     pub fn cp_a_ref_hl(&mut self) -> u8 {
-        self.alu_sub(self.regs.a, self.mmu.read_byte(self.regs.hl()), false);
+        self.alu_cp(self.mmu.read_byte(self.regs.hl()));
         8
     }
 
@@ -159,7 +165,7 @@ impl Cpu {
     pub fn cp_a_n8(&mut self) -> u8 {
         let imm = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
-        self.alu_sub(self.regs.a, imm, false);
+        self.alu_cp(imm);
         8
     }
 
@@ -175,8 +181,8 @@ impl Cpu {
 
     /// DEC r8
     pub fn dec_r8(&mut self, r: R8) -> u8 {
-        let result = self.alu_dec(self.regs.read(r));
-        self.regs.write(r, result);
+        let result = self.alu_dec(self.regs.r8(r));
+        self.regs.set_r8(r, result);
         4
     }
 
@@ -199,8 +205,8 @@ impl Cpu {
 
     /// INC r8
     pub fn inc_r8(&mut self, r: R8) -> u8 {
-        let result = self.alu_inc(self.regs.read(r));
-        self.regs.write(r, result);
+        let result = self.alu_inc(self.regs.r8(r));
+        self.regs.set_r8(r, result);
         4
     }
 
@@ -211,28 +217,25 @@ impl Cpu {
         12
     }
 
-    /// ORs the values, sets flags, and returns the result
-    fn alu_or(&mut self, x: u8, y: u8) -> u8 {
+    /// ORs register A with the 8-bit value, and sets flags
+    fn alu_or(&mut self, x: u8) {
         use Flag::*;
-        let result = x | y;
-        self.regs.set_flag(Z, result == 0);
+        self.regs.a = self.regs.a | x;
+        self.regs.set_flag(Z, self.regs.a == 0);
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, false);
         self.regs.set_flag(C, false);
-        result
     }
 
     /// OR A,r8
     pub fn or_a_r8(&mut self, r: R8) -> u8 {
-        let result = self.alu_or(self.regs.a, self.regs.read(r));
-        self.regs.a = result;
+        self.alu_or(self.regs.r8(r));
         4
     }
 
     /// OR A,\[HL\]
     pub fn or_a_ref_hl(&mut self) -> u8 {
-        let result = self.alu_or(self.regs.a, self.mmu.read_byte(self.regs.hl()));
-        self.regs.a = result;
+        self.alu_or(self.mmu.read_byte(self.regs.hl()));
         8
     }
 
@@ -240,26 +243,19 @@ impl Cpu {
     pub fn or_a_n8(&mut self) -> u8 {
         let imm = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
-        let result = self.alu_or(self.regs.a, imm);
-        self.regs.a = result;
+        self.alu_or(imm);
         8
     }
 
     /// SBC A,r8
     pub fn sbc_a_r8(&mut self, r: R8) -> u8 {
-        let result = self.alu_sub(self.regs.a, self.regs.read(r), self.regs.get_flag(Flag::C));
-        self.regs.a = result;
+        self.alu_sub(self.regs.r8(r), self.regs.flag(Flag::C));
         4
     }
 
     /// SBC A,\[HL\]
     pub fn sbc_a_ref_hl(&mut self) -> u8 {
-        let result = self.alu_sub(
-            self.regs.a,
-            self.mmu.read_byte(self.regs.hl()),
-            self.regs.get_flag(Flag::C),
-        );
-        self.regs.a = result;
+        self.alu_sub(self.mmu.read_byte(self.regs.hl()), self.regs.flag(Flag::C));
         8
     }
 
@@ -267,22 +263,19 @@ impl Cpu {
     pub fn sbc_a_n8(&mut self) -> u8 {
         let imm = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
-        let result = self.alu_sub(self.regs.a, imm, self.regs.get_flag(Flag::C));
-        self.regs.a = result;
+        self.alu_sub(imm, self.regs.flag(Flag::C));
         8
     }
 
     /// SUB A,r8
     pub fn sub_a_r8(&mut self, r: R8) -> u8 {
-        let result = self.alu_sub(self.regs.a, self.regs.read(r), false);
-        self.regs.a = result;
+        self.alu_sub(self.regs.r8(r), false);
         4
     }
 
     /// SUB A,\[HL\]
     pub fn sub_a_ref_hl(&mut self) -> u8 {
-        let result = self.alu_sub(self.regs.a, self.mmu.read_byte(self.regs.hl()), false);
-        self.regs.a = result;
+        self.alu_sub(self.mmu.read_byte(self.regs.hl()), false);
         8
     }
 
@@ -290,33 +283,29 @@ impl Cpu {
     pub fn sub_a_n8(&mut self) -> u8 {
         let imm = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
-        let result = self.alu_sub(self.regs.a, imm, false);
-        self.regs.a = result;
+        self.alu_sub(imm, false);
         8
     }
 
-    /// XORs the two values, sets flags, and return the result
-    fn alu_xor(&mut self, x: u8, y: u8) -> u8 {
+    /// XORs A with the value, and sets flags
+    fn alu_xor(&mut self, x: u8) {
         use Flag::*;
-        let result = x ^ y;
-        self.regs.set_flag(Z, result == 0);
+        self.regs.a = self.regs.a ^ x;
+        self.regs.set_flag(Z, self.regs.a == 0);
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, false);
         self.regs.set_flag(C, false);
-        result
     }
 
     /// XOR A,r8
     pub fn xor_a_r8(&mut self, r: R8) -> u8 {
-        let result = self.alu_xor(self.regs.a, self.regs.read(r));
-        self.regs.a = result;
+        self.alu_xor(self.regs.r8(r));
         4
     }
 
     /// XOR A,\[HL\]
     pub fn xor_a_ref_hl(&mut self) -> u8 {
-        let result = self.alu_xor(self.regs.a, self.mmu.read_byte(self.regs.hl()));
-        self.regs.a = result;
+        self.alu_xor(self.mmu.read_byte(self.regs.hl()));
         8
     }
 
@@ -324,7 +313,7 @@ impl Cpu {
     pub fn xor_a_n8(&mut self) -> u8 {
         let imm = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
-        self.regs.a = self.alu_xor(self.regs.a, imm);
+        self.alu_xor(imm);
         8
     }
 
@@ -332,151 +321,380 @@ impl Cpu {
 
     /// ADD HL,r16
     pub fn add_hl_r16(&mut self, reg: R16) -> u8 {
-        todo!()
+        use Flag::*;
+        let hl = self.regs.hl();
+        let val = self.regs.r16(reg);
+        let result = hl.wrapping_add(val);
+
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(C, hl > 0xffff - val);
+        // set half-carry if overflow from bit 11
+        let mask = 0x07ff;
+        self.regs.set_flag(H, (hl & mask) + (val & mask) > mask);
+
+        self.regs.set_hl(result);
+        8
     }
 
     /// DEC r16
     pub fn dec_r16(&mut self, reg: R16) -> u8 {
-        todo!()
+        self.regs.set_r16(reg, self.regs.r16(reg).wrapping_sub(1));
+        8
     }
 
     /// INC r16
     pub fn inc_r16(&mut self, reg: R16) -> u8 {
-        todo!()
+        self.regs.set_r16(reg, self.regs.r16(reg).wrapping_add(1));
+        8
     }
 
     // --- Bit Operations Instructions ---
 
+    /// Test bit u3 in register r8, set the zero flag if bit not set.
+    fn test_bit_u3(&mut self, u3: u8, val: u8) {
+        use Flag::*;
+        let bit = (val >> u3) & 1;
+        self.regs.set_flag(Z, bit == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, true);
+    }
+
     /// BIT u3,r8
     pub fn bit_u3_r8(&mut self, u3: u8, reg: R8) -> u8 {
-        todo!()
+        self.test_bit_u3(u3, self.regs.r8(reg));
+        8
     }
 
     /// BIT u3,\[HL\]
     pub fn bit_u3_ref_hl(&mut self, u3: u8) -> u8 {
-        todo!()
+        self.test_bit_u3(u3, self.mmu.read_byte(self.regs.hl()));
+        12
     }
 
     /// RES u3,r8
+    ///
+    /// Set bit u3 in register r8 to 0. Bit 0 is the rightmost one, bit 7 the leftmost one.
     pub fn res_u3_r8(&mut self, u3: u8, reg: R8) -> u8 {
-        todo!()
+        let mask = !(1 << u3);
+        self.regs.set_r8(reg, self.regs.r8(reg) & mask);
+        8
     }
 
     /// RES u3,\[HL\]
+    ///
+    /// Set bit u3 in the byte pointed by HL to 0. Bit 0 is the rightmost one, bit 7 the leftmost one.
     pub fn res_u3_ref_hl(&mut self, u3: u8) -> u8 {
-        todo!()
+        let mask = !(1 << u3);
+        let val = self.mmu.read_byte(self.regs.hl()) & mask;
+        self.mmu.write_byte(self.regs.hl(), val);
+        16
     }
 
     /// SET u3,r8
+    ///
+    /// Set bit u3 in register r8 to 1. Bit 0 is the rightmost one, bit 7 the leftmost one.
     pub fn set_u3_r8(&mut self, u3: u8, reg: R8) -> u8 {
-        todo!()
+        let mask = 1 << u3;
+        self.regs.set_r8(reg, self.regs.r8(reg) | mask);
+        8
     }
 
     /// SET u3,\[HL\]
+    ///
+    /// Set bit u3 in the byte pointed by HL to 1. Bit 0 is the rightmost one, bit 7 the leftmost one.
     pub fn set_u3_ref_hl(&mut self, u3: u8) -> u8 {
-        todo!()
+        let mask = 1 << u3;
+        let val = self.mmu.read_byte(self.regs.hl()) | mask;
+        self.mmu.write_byte(self.regs.hl(), val);
+        16
+    }
+
+    /// Swap the upper 4 bits of the byte and the lower 4 ones. Set flags accordingly.
+    fn swap_byte(&mut self, val: u8) -> u8 {
+        use Flag::*;
+        let lower = val & 0xf;
+        let upper = val & 0xf0;
+        let res = (lower << 4) | (upper >> 4);
+        self.regs.set_flag(Z, res == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, false);
+        res
     }
 
     /// SWAP r8
     pub fn swap_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.swap_byte(self.regs.r8(reg));
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// SWAP \[HL\]
     pub fn swap_ref_hl(&mut self) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        let swapped = self.swap_byte(val);
+        self.mmu.write_byte(self.regs.hl(), swapped);
+        16
     }
 
     // --- Bit Shift Instructions ---
 
+    /// Rotate bits left, through the carry flag, setting flags appropriately.
+    ///
+    /// ```
+    ///   ┏━ Flags ━┓ ┏━━━━━━━ u8 ━━━━━━┓
+    /// ┌─╂─   C   ←╂─╂─ b7 ← ... ← b0 ←╂─┐
+    /// │ ┗━━━━━━━━━┛ ┗━━━━━━━━━━━━━━━━━┛ │
+    /// └─────────────────────────────────┘
+    /// ```
+    fn alu_rl(&mut self, val: u8) -> u8 {
+        use Flag::*;
+        let res = val.rotate_left(1) | (self.regs.flag(C) as u8);
+        self.regs.set_flag(Z, res == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, val & 0x80 != 0);
+        res
+    }
+
     /// RL r8
     pub fn rl_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.alu_rl(self.regs.r8(reg));
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// RL \[HL\]
     pub fn rl_ref_hl(&mut self) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        let rotated = self.alu_rl(val);
+        self.mmu.write_byte(self.regs.hl(), rotated);
+        16
     }
 
     /// RLA
     pub fn rla(&mut self) -> u8 {
-        todo!()
+        self.rl_r8(R8::A);
+        self.regs.set_flag(Flag::Z, false);
+        4
+    }
+
+    /// Rotate left, setting flags appropriately
+    ///
+    /// ```
+    /// ┏━ Flags ━┓   ┏━━━━━━━ u8 ━━━━━━┓
+    /// ┃    C   ←╂─┬─╂─ b7 ← ... ← b0 ←╂─┐
+    /// ┗━━━━━━━━━┛ │ ┗━━━━━━━━━━━━━━━━━┛ │
+    ///             └─────────────────────┘
+    /// ```
+    pub fn alu_rlc(&mut self, val: u8) -> u8 {
+        use Flag::*;
+        let res = val.rotate_left(1);
+        self.regs.set_flag(Z, res == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, val & 0x80 != 0);
+        res
     }
 
     /// RLC r8
     pub fn rlc_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.alu_rlc(self.regs.r8(reg));
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// RLC \[HL\]
     pub fn rlc_ref_hl(&mut self) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        let rotated = self.alu_rlc(val);
+        self.mmu.write_byte(self.regs.hl(), rotated);
+        16
     }
 
     /// RLCA
     pub fn rlca(&mut self) -> u8 {
-        todo!()
+        self.rlc_r8(R8::A);
+        self.regs.set_flag(Flag::Z, false);
+        4
+    }
+
+    /// Rotate bits right, through the carry flag, setting flags appropriately.
+    ///
+    /// ```
+    ///   ┏━━━━━━━ u8 ━━━━━━┓ ┏━ Flags ━┓
+    /// ┌─╂→ b7 → ... → b0 ─╂─╂→   C   ─╂─┐
+    /// │ ┗━━━━━━━━━━━━━━━━━┛ ┗━━━━━━━━━┛ │
+    /// └─────────────────────────────────┘
+    /// ```
+    pub fn alu_rr(&mut self, val: u8) -> u8 {
+        use Flag::*;
+        let res = val.rotate_right(1) | ((self.regs.flag(C) as u8) << 7);
+        self.regs.set_flag(Z, res == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, val & 0x01 == 1);
+        res
     }
 
     /// RR r8
     pub fn rr_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.alu_rr(self.regs.r8(reg));
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// RR \[HL\]
     pub fn rr_ref_hl(&mut self) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        let rotated = self.alu_rr(val);
+        self.mmu.write_byte(self.regs.hl(), rotated);
+        16
     }
 
     /// RRA
     pub fn rra(&mut self) -> u8 {
-        todo!()
+        self.rr_r8(R8::A);
+        self.regs.set_flag(Flag::Z, false);
+        4
+    }
+
+    /// Rotate right, setting flags appropriately
+    ///
+    /// ```
+    ///   ┏━━━━━━━ u8 ━━━━━━┓   ┏━ Flags ━┓
+    /// ┌─╂→ b7 → ... → b0 ─╂─┬─╂→   C    ┃
+    /// │ ┗━━━━━━━━━━━━━━━━━┛ │ ┗━━━━━━━━━┛
+    /// └─────────────────────┘
+    /// ```
+    pub fn alu_rrc(&mut self, val: u8) -> u8 {
+        use Flag::*;
+        let res = val.rotate_right(1);
+        self.regs.set_flag(Z, res == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, val & 0x01 == 1);
+        res
     }
 
     /// RRC r8
     pub fn rrc_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.alu_rrc(self.regs.r8(reg));
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// RRC \[HL\]
     pub fn rrc_ref_hl(&mut self) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        let rotated = self.alu_rrc(val);
+        self.mmu.write_byte(self.regs.hl(), rotated);
+        16
     }
 
     /// RRCA
     pub fn rrca(&mut self) -> u8 {
-        todo!()
+        self.rrc_r8(R8::A);
+        self.regs.set_flag(Flag::Z, false);
+        4
+    }
+
+    /// Shift left arithmetically, setting flags appropriately
+    ///
+    ///```
+    /// ┏━ Flags ━┓ ┏━━━━━━━ u8 ━━━━━━┓
+    /// ┃    C   ←╂─╂─ b7 ← ... ← b0 ←╂─ 0
+    /// ┗━━━━━━━━━┛ ┗━━━━━━━━━━━━━━━━━┛
+    /// ```
+    fn alu_sla(&mut self, val: u8) -> u8 {
+        use Flag::*;
+        let res = val << 1;
+        self.regs.set_flag(Z, res == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, val & 0x80 != 0);
+        res
     }
 
     /// SLA r8
     pub fn sla_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.alu_sla(self.regs.r8(reg));
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// SLA \[HL\]
     pub fn sla_ref_hl(&mut self) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        let rotated = self.alu_sla(val);
+        self.mmu.write_byte(self.regs.hl(), rotated);
+        16
+    }
+
+    /// Shift right arithmetically, setting flags appropriately.
+    ///
+    /// `b7` remains unchanged.
+    ///
+    ///```
+    /// ┏━━━━━━ u8 ━━━━━━┓ ┏━ Flags ━┓
+    /// ┃ b7 → ... → b0 ─╂─╂→   C    ┃
+    /// ┗━━━━━━━━━━━━━━━━┛ ┗━━━━━━━━━┛
+    /// ```
+    fn alu_sra(&mut self, val: u8) -> u8 {
+        use Flag::*;
+        let res = val >> 1 | (val & 0x80);
+        self.regs.set_flag(Z, res == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, val & 0x01 == 1);
+        res
     }
 
     /// SRA r8
     pub fn sra_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.alu_sra(self.regs.r8(reg));
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// SRA \[HL\]
     pub fn sra_ref_hl(&mut self) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        let rotated = self.alu_sra(val);
+        self.mmu.write_byte(self.regs.hl(), rotated);
+        16
+    }
+
+    /// Shift right logically, setting flags appropriately.
+    ///
+    ///```
+    ///    ┏━━━━━━━ u8 ━━━━━━┓ ┏━ Flags ━┓
+    /// 0 ─╂→ b7 → ... → b0 ─╂─╂→   C    ┃
+    ///    ┗━━━━━━━━━━━━━━━━━┛ ┗━━━━━━━━━┛
+    /// ```
+    fn alu_srl(&mut self, val: u8) -> u8 {
+        use Flag::*;
+        let res = val >> 1;
+        self.regs.set_flag(Z, res == 0);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, val & 0x01 == 1);
+        res
     }
 
     /// SRL r8
     pub fn srl_r8(&mut self, reg: R8) -> u8 {
-        todo!()
+        let val = self.alu_srl(self.regs.r8(reg));
+        self.regs.set_r8(reg, val);
+        8
     }
 
     /// SRL \[HL\]
     pub fn srl_ref_hl(&mut self) -> u8 {
-        todo!()
+        let val = self.mmu.read_byte(self.regs.hl());
+        let rotated = self.alu_srl(val);
+        self.mmu.write_byte(self.regs.hl(), rotated);
+        16
     }
 
     // --- Load Instructions ---
@@ -732,5 +950,97 @@ impl Cpu {
 
     pub fn stop(&self) -> u8 {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::{prop_assert_eq, proptest};
+
+    use crate::cpu::{
+        register_file::{Flag, R8},
+        Cpu,
+    };
+
+    proptest! {
+        #[test]
+        fn sub_a_a(a: u8, init_flags: bool) {
+            use Flag::*;
+            let mut cpu = Cpu::create();
+            for flag in [Z, N, H, C] {
+                cpu.regs.set_flag(flag, init_flags);
+            }
+            cpu.regs.a = a;
+            cpu.sub_a_r8(R8::A);
+            prop_assert_eq!(cpu.regs.a, 0);
+            prop_assert_eq!(cpu.regs.flag(Z), true);
+            prop_assert_eq!(cpu.regs.flag(N), true);
+            prop_assert_eq!(cpu.regs.flag(H), false);
+            prop_assert_eq!(cpu.regs.flag(C), false);
+        }
+
+        #[test]
+        fn xor_a_a(a: u8, init_flags: bool) {
+            use Flag::*;
+            let mut cpu = Cpu::create();
+            for flag in [Z, N, H, C] {
+                cpu.regs.set_flag(flag, init_flags);
+            }
+            cpu.regs.a = a;
+            cpu.xor_a_r8(R8::A);
+            prop_assert_eq!(cpu.regs.a, 0);
+            prop_assert_eq!(cpu.regs.flag(Z), true);
+            prop_assert_eq!(cpu.regs.flag(N), false);
+            prop_assert_eq!(cpu.regs.flag(H), false);
+            prop_assert_eq!(cpu.regs.flag(C), false);
+        }
+
+        #[test]
+        fn or_a_a(a: u8, init_flags: bool) {
+            use Flag::*;
+            let mut cpu = Cpu::create();
+            for flag in [Z, N, H, C] {
+                cpu.regs.set_flag(flag, init_flags);
+            }
+            cpu.regs.a = a;
+            cpu.or_a_r8(R8::A);
+            prop_assert_eq!(cpu.regs.a, a);
+            prop_assert_eq!(cpu.regs.flag(Z), a == 0);
+            prop_assert_eq!(cpu.regs.flag(N), false);
+            prop_assert_eq!(cpu.regs.flag(H), false);
+            prop_assert_eq!(cpu.regs.flag(C), false);
+        }
+
+        #[test]
+        fn and_a_a(a: u8, init_flags: bool) {
+            use Flag::*;
+            let mut cpu = Cpu::create();
+            for flag in [Z, N, H, C] {
+                cpu.regs.set_flag(flag, init_flags);
+            }
+            cpu.regs.a = a;
+            cpu.and_a_r8(R8::A);
+            prop_assert_eq!(cpu.regs.a, a);
+            prop_assert_eq!(cpu.regs.flag(Z), a==0);
+            prop_assert_eq!(cpu.regs.flag(N), false);
+            prop_assert_eq!(cpu.regs.flag(H), true);
+            prop_assert_eq!(cpu.regs.flag(C), false);
+        }
+
+        #[test]
+        fn cp_a_a(a: u8, init_flags: bool) {
+            use Flag::*;
+            let mut cpu = Cpu::create();
+            for flag in [Z, N, H, C] {
+                cpu.regs.set_flag(flag, init_flags);
+            }
+            cpu.regs.a = a;
+            cpu.cp_a_r8(R8::A);
+            prop_assert_eq!(cpu.regs.a, a);
+            prop_assert_eq!(cpu.regs.flag(Z), true);
+            prop_assert_eq!(cpu.regs.flag(N), true);
+            prop_assert_eq!(cpu.regs.flag(H), false);
+            prop_assert_eq!(cpu.regs.flag(C), false);
+        }
     }
 }

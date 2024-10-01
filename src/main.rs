@@ -1,8 +1,7 @@
-#![allow(unused)]
 use rand::{self, Rng};
 use std::{
     io::{stdout, Write},
-    thread::{self, sleep},
+    thread::{self},
     time::{self, Duration, Instant},
 };
 
@@ -116,50 +115,4 @@ fn test_generate_display_string() {
     let display = [[true; 160]; 144];
     let display_string = generate_display_string(display);
     println!("{}", display_string);
-}
-
-fn experiment() {
-    // switch to alternate screen buffer
-    print!("\x1b[?1049h");
-    stdout().flush().unwrap();
-    println!("Switched to alt screen");
-    thread::sleep(time::Duration::from_secs(5));
-
-    println!("printing some stuff to alt buffer");
-    // println!("will now, erase from cursor to beginning of screen");
-    // Erase from cursor to beginning of screen
-    // print!("\x1b[1J");
-    println!("Will now erase saved lines");
-    thread::sleep(time::Duration::from_secs(5));
-    print!("\x1b[3J");
-
-    thread::sleep(time::Duration::from_secs(5));
-
-    // Move cursor to (0,0)
-    print!("\x1b[H");
-    stdout().flush().unwrap();
-    thread::sleep(time::Duration::from_secs(5));
-    println!("printed some more stuff after erasing screen");
-
-    let lower_half_block = '▄';
-    let upper_half_block = '▀';
-    let full_block = '█';
-    let mut display_str = String::new();
-    for _row in 0..72 {
-        for _col in 0..160 {
-            display_str.push(lower_half_block);
-        }
-        display_str.push('\r');
-        display_str.push('\n');
-    }
-    print!("{}", display_str);
-    stdout().flush().unwrap();
-
-    thread::sleep(time::Duration::from_secs(5));
-
-    // Switch back to the normal screen buffer
-    print!("\x1b[?1049l");
-    stdout().flush().unwrap();
-    println!("Switched back to normal screen buffer");
-    thread::sleep(time::Duration::from_secs(5));
 }
