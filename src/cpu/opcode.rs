@@ -59,7 +59,7 @@ impl Cpu {
         self.regs.sp = self.regs.sp.wrapping_add(1);
         let hi = self.mmu.read_byte(self.regs.sp);
         self.regs.sp = self.regs.sp.wrapping_add(1);
-        return u16::from_le_bytes([lo, hi]);
+        u16::from_le_bytes([lo, hi])
     }
 
     fn check_cond(&mut self, cond: CC) -> bool {
@@ -93,7 +93,7 @@ impl Cpu {
         self.regs
             .set_flag(C, (a as u16 + x as u16 + carry as u16) > (u8::MAX as u16));
         self.regs
-            .set_flag(H, (a & 0x0f) + (x & 0x0f) + carry > 0x0f);
+            .set_flag(H, (a & 0x0F) + (x & 0x0F) + carry > 0x0F);
         self.regs.a = result;
     }
 
@@ -173,7 +173,7 @@ impl Cpu {
         self.regs.set_flag(N, true);
         self.regs.set_flag(
             H,
-            (a & 0x0f).wrapping_sub(x & 0xf).wrapping_sub(carry as u8) & 0x10 != 0,
+            (a & 0x0F).wrapping_sub(x & 0xF).wrapping_sub(carry as u8) & 0x10 != 0,
         );
         self.regs.set_flag(C, x as u16 + carry as u16 > a as u16);
         self.regs.a = result;
@@ -211,7 +211,7 @@ impl Cpu {
         let result = x.wrapping_sub(1);
         self.regs.set_flag(Z, result == 0);
         self.regs.set_flag(N, true);
-        self.regs.set_flag(H, x & 0x0f == 0);
+        self.regs.set_flag(H, x & 0x0F == 0);
         result
     }
 
@@ -235,7 +235,7 @@ impl Cpu {
         let result = val.wrapping_add(1);
         self.regs.set_flag(Z, result == 0);
         self.regs.set_flag(N, false);
-        self.regs.set_flag(H, val & 0x0f == 0x0f);
+        self.regs.set_flag(H, val & 0x0F == 0x0F);
         result
     }
 
@@ -359,9 +359,9 @@ impl Cpu {
         let result = hl.wrapping_add(val);
 
         self.regs.set_flag(N, false);
-        self.regs.set_flag(C, hl > 0xffff - val);
+        self.regs.set_flag(C, hl > 0xFFFF - val);
         // set half-carry if overflow from bit 11
-        let mask = 0x07ff;
+        let mask = 0x0FFF;
         self.regs.set_flag(H, (hl & mask) + (val & mask) > mask);
 
         self.regs.set_hl(result);
@@ -444,8 +444,8 @@ impl Cpu {
     /// Swap the upper 4 bits of the byte and the lower 4 ones. Set flags accordingly.
     fn swap_byte(&mut self, val: u8) -> u8 {
         use Flag::*;
-        let lower = val & 0xf;
-        let upper = val & 0xf0;
+        let lower = val & 0xF;
+        let upper = val & 0xF0;
         let res = (lower << 4) | (upper >> 4);
         self.regs.set_flag(Z, res == 0);
         self.regs.set_flag(N, false);
@@ -951,62 +951,96 @@ impl Cpu {
 
     /// ADD HL,SP
     fn add_hl_sp(&mut self) -> u8 {
-        todo!()
+        self.add_hl_r16(R16::SP);
+        8
+    }
+
+    /// Add the signed value and SP, return the result, and set flags
+    fn alu_add_sp_e8(&mut self, imm: i8) -> u16 {
+        use Flag::*;
+        let offset = self.fetch_imm8() as i8 as i16 as u16;
+        let sp = self.regs.sp;
+        self.regs.set_flag(Z, false);
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, (sp & 0x0F) + (offset & 0x0F) > 0x0F);
+        self.regs.set_flag(C, (sp & 0xFF) + (offset & 0xFF) > 0xFF);
+        sp.wrapping_add(offset)
     }
 
     /// ADD SP,e8
     pub fn add_sp_e8(&mut self) -> u8 {
-        todo!()
+        let offset = self.fetch_imm8() as i8;
+        self.regs.sp = self.alu_add_sp_e8(offset);
+        16
     }
 
     /// DEC SP
     fn dec_sp(&mut self) -> u8 {
-        todo!()
+        self.regs.sp = self.regs.sp.wrapping_sub(1);
+        8
     }
 
     /// INC SP
     fn inc_sp(&mut self) -> u8 {
-        todo!()
+        self.regs.sp = self.regs.sp.wrapping_add(1);
+        8
     }
 
     /// LD SP,n16
     fn ld_sp_n16(&mut self, addr: u16) -> u8 {
-        todo!()
+        let addr = self.fetch_imm16();
+        self.regs.sp = addr;
+        12
     }
 
     /// LD [n16],SP
     fn ld_n16_sp(&mut self, addr: u16) -> u8 {
-        todo!()
+        let addr = self.fetch_imm16();
+        let [lo, hi] = self.regs.sp.to_le_bytes();
+        self.mmu.write_byte(addr, lo);
+        self.mmu.write_byte(addr + 1, hi);
+        20
     }
 
     /// LD HL,SP+e8
     pub fn ld_hl_sp_e8(&mut self) -> u8 {
-        todo!()
+        let offset = self.fetch_imm8() as i8;
+        let word = self.alu_add_sp_e8(offset);
+        self.regs.set_hl(word);
+        12
     }
 
     /// LD SP,HL
     pub fn ld_sp_hl(&mut self) -> u8 {
-        todo!()
+        self.regs.sp = self.regs.hl();
+        8
     }
 
     /// POP AF
     fn pop_af(&mut self) -> u8 {
-        todo!()
+        use Flag::*;
+        let af = self.pop_u16();
+        self.regs.set_af(af);
+        12
     }
 
     /// POP r16
     pub fn pop_r16(&mut self, reg: R16) -> u8 {
-        todo!()
+        let word = self.pop_u16();
+        self.regs.set_r16(reg, word);
+        12
     }
 
     /// PUSH AF
     fn push_af(&mut self) -> u8 {
-        todo!()
+        self.push_u16(self.regs.af());
+        16
     }
 
     /// PUSH r16
     pub fn push_r16(&mut self, reg: R16) -> u8 {
-        todo!()
+        self.push_u16(self.regs.r16(reg));
+        16
     }
 
     pub fn daa(&mut self) -> u8 {
