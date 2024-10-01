@@ -30,7 +30,47 @@ pub enum CC {
 ///
 /// Each function simulates the execution of an instruction and returns the number of T-cycles it takes. e.g. [Cpu::nop] returns 4.
 impl Cpu {
-    // TODO: its possible that I can inline the register A as the argument to most of the arithmetic functions...
+    // --- utility functions ---
+    /// Fetch the 8-bit immediate that follows the opcode, and advance PC.
+    fn fetch_imm8(&mut self) -> u8 {
+        let res = self.mmu.read_byte(self.regs.pc);
+        self.regs.pc += 1;
+        res
+    }
+
+    /// Fetch the 16-bit immediate that follows the opcode, and advance PC.
+    fn fetch_imm16(&mut self) -> u16 {
+        let res = self.mmu.read_word(self.regs.pc);
+        self.regs.pc += 2;
+        res
+    }
+
+    /// Pushes the word on to the stack in little-endian order (the lower-order byte is at the lower address).
+    fn push_u16(&mut self, word: u16) {
+        let [lo, hi] = word.to_le_bytes();
+        self.regs.sp = self.regs.sp.wrapping_sub(1);
+        self.mmu.write_byte(self.regs.sp, hi);
+        self.regs.sp = self.regs.sp.wrapping_sub(1);
+        self.mmu.write_byte(self.regs.sp, lo);
+    }
+
+    fn pop_u16(&mut self) -> u16 {
+        let lo = self.mmu.read_byte(self.regs.sp);
+        self.regs.sp = self.regs.sp.wrapping_add(1);
+        let hi = self.mmu.read_byte(self.regs.sp);
+        self.regs.sp = self.regs.sp.wrapping_add(1);
+        return u16::from_le_bytes([lo, hi]);
+    }
+
+    fn check_cond(&mut self, cond: CC) -> bool {
+        use Flag::{C, Z};
+        match cond {
+            CC::Z => self.regs.flag(Z),
+            CC::NZ => !self.regs.flag(Z),
+            CC::C => self.regs.flag(C),
+            CC::NC => !self.regs.flag(C),
+        }
+    }
 
     // --- 8-bit Arithmetic and Logic Instructions
 
@@ -71,8 +111,7 @@ impl Cpu {
 
     /// ADC A,n8
     pub fn adc_a_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.alu_adc(imm);
         8
     }
@@ -91,8 +130,7 @@ impl Cpu {
 
     /// ADD A,n8
     pub fn add_a_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.alu_add(imm, false);
         8
     }
@@ -121,8 +159,7 @@ impl Cpu {
 
     /// AND A,n8
     pub fn and_a_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.alu_and(imm);
         8
     }
@@ -163,8 +200,7 @@ impl Cpu {
 
     /// CP A,n8
     pub fn cp_a_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.alu_cp(imm);
         8
     }
@@ -241,8 +277,7 @@ impl Cpu {
 
     /// OR A,n8
     pub fn or_a_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.alu_or(imm);
         8
     }
@@ -261,8 +296,7 @@ impl Cpu {
 
     /// SBC A,n8
     pub fn sbc_a_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.alu_sub(imm, self.regs.flag(Flag::C));
         8
     }
@@ -281,8 +315,7 @@ impl Cpu {
 
     /// SUB A,n8
     pub fn sub_a_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.alu_sub(imm, false);
         8
     }
@@ -311,8 +344,7 @@ impl Cpu {
 
     /// XOR A,n8
     pub fn xor_a_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.alu_xor(imm);
         8
     }
@@ -707,16 +739,14 @@ impl Cpu {
 
     /// LD r8,n8
     pub fn ld_r8_n8(&mut self, reg: R8) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.regs.set_r8(reg, imm);
         8
     }
 
     /// LD r16,n16
     pub fn ld_r16_n16(&mut self, r: R16) -> u8 {
-        let word = self.mmu.read_word(self.regs.pc);
-        self.regs.pc += 2;
+        let word = self.fetch_imm16();
         self.regs.set_r16(r, word);
         self.regs.pc += 2;
         12
@@ -730,8 +760,7 @@ impl Cpu {
 
     /// LD \[HL\],n8
     pub fn ld_ref_hl_n8(&mut self) -> u8 {
-        let imm = self.mmu.read_byte(self.regs.pc);
-        self.regs.pc += 1;
+        let imm = self.fetch_imm8();
         self.mmu.write_byte(self.regs.hl(), imm);
         12
     }
@@ -751,8 +780,7 @@ impl Cpu {
 
     /// LD \[n16\],A
     pub fn ld_ref_n16_a(&mut self) -> u8 {
-        let addr = self.mmu.read_word(self.regs.pc);
-        self.regs.pc += 2;
+        let addr = self.fetch_imm16();
         self.mmu.write_byte(addr, self.regs.a);
         16
     }
@@ -777,8 +805,7 @@ impl Cpu {
 
     /// LD A,\[n16\]
     pub fn ld_a_ref_n16(&mut self) -> u8 {
-        let addr = self.mmu.read_word(self.regs.pc);
-        self.regs.pc += 2;
+        let addr = self.fetch_imm16();
         self.regs.a = self.mmu.read_byte(addr);
         16
     }
@@ -827,57 +854,97 @@ impl Cpu {
 
     /// CALL n16
     pub fn call_n16(&mut self) -> u8 {
-        todo!()
+        let jump_addr = self.fetch_imm16();
+        self.push_u16(self.regs.pc);
+        self.regs.pc = jump_addr;
+        24
     }
 
     /// CALL cc,n16
     pub fn call_cc_n16(&mut self, cc: CC) -> u8 {
-        todo!()
+        let jump_addr = self.fetch_imm16();
+        if self.check_cond(cc) {
+            self.push_u16(self.regs.pc);
+            self.regs.pc = jump_addr;
+            24
+        } else {
+            12
+        }
     }
 
     /// JP HL
     pub fn jp_hl(&mut self) -> u8 {
-        todo!()
+        self.regs.pc = self.regs.hl();
+        4
     }
 
     /// JP n16
     pub fn jp_n16(&mut self) -> u8 {
-        todo!()
+        let addr = self.fetch_imm16();
+        self.regs.pc = addr;
+        16
     }
 
     /// JP cc,n16
     pub fn jp_cc_n16(&mut self, cc: CC) -> u8 {
-        todo!()
+        let addr = self.fetch_imm16();
+        if self.check_cond(cc) {
+            self.regs.pc = addr;
+            16
+        } else {
+            12
+        }
     }
 
     /// JR n16
+    ///
+    /// Relative Jump to address n16.
+    /// The address is encoded as a signed 8-bit offset from the address immediately following the JR instruction, so the target address n16 must be between -128 and 127 bytes away.
     pub fn jr_n16(&mut self) -> u8 {
-        todo!()
+        let offset = self.fetch_imm8() as i8;
+        self.regs.pc = (self.regs.pc as i16 + offset as i16) as u16;
+        12
     }
 
     /// JR cc,n16
     pub fn jr_cc_n16(&mut self, cc: CC) -> u8 {
-        todo!()
+        let offset = self.fetch_imm8() as i8;
+        if self.check_cond(cc) {
+            self.regs.pc = (self.regs.pc as i16 + offset as i16) as u16;
+            12
+        } else {
+            8
+        }
     }
 
     /// RET cc
     pub fn ret_cc(&mut self, cc: CC) -> u8 {
-        todo!()
+        if self.check_cond(cc) {
+            self.regs.sp = self.pop_u16();
+            20
+        } else {
+            8
+        }
     }
 
     /// RET
     pub fn ret(&mut self) -> u8 {
-        todo!()
+        self.regs.sp = self.pop_u16();
+        16
     }
 
     /// RETI
     pub fn reti(&mut self) -> u8 {
-        todo!()
+        self.regs.sp = self.pop_u16();
+        self.ime = true;
+        16
     }
 
     /// RST vec
     pub fn rst_vec(&mut self, vec: RstVec) -> u8 {
-        todo!()
+        self.push_u16(self.regs.pc);
+        self.regs.pc = vec as u16;
+        16
     }
 
     // --- Stack Operations Instructions ---

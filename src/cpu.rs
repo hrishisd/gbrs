@@ -9,6 +9,8 @@ mod register_file;
 struct Cpu {
     regs: Registers,
     mmu: Mmu,
+    /// Controls whether any interrupt handlers are called, regardless of the contents of `IE`.
+    ime: bool,
 }
 
 impl Cpu {
@@ -16,6 +18,7 @@ impl Cpu {
         Cpu {
             regs: Registers::create(),
             mmu: Mmu::create(),
+            ime: false,
         }
     }
 
