@@ -124,7 +124,7 @@ impl Registers {
             R16::HL => (self.h, self.l),
             R16::SP => return self.sp,
         };
-        return u16::from_be_bytes([hi, lo]);
+        u16::from_be_bytes([hi, lo])
     }
 
     pub fn set_r16(&mut self, r: R16, word: u16) {

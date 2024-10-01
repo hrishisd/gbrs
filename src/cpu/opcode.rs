@@ -100,7 +100,7 @@ impl Cpu {
     /// AND the value with A, and set flags
     fn alu_and(&mut self, x: u8) {
         use Flag::*;
-        self.regs.a = self.regs.a & x;
+        self.regs.a &= x;
         self.regs.set_flag(Z, self.regs.a == 0);
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, true);
@@ -220,7 +220,7 @@ impl Cpu {
     /// ORs register A with the 8-bit value, and sets flags
     fn alu_or(&mut self, x: u8) {
         use Flag::*;
-        self.regs.a = self.regs.a | x;
+        self.regs.a |= x;
         self.regs.set_flag(Z, self.regs.a == 0);
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, false);
@@ -290,7 +290,7 @@ impl Cpu {
     /// XORs A with the value, and sets flags
     fn alu_xor(&mut self, x: u8) {
         use Flag::*;
-        self.regs.a = self.regs.a ^ x;
+        self.regs.a ^= x;
         self.regs.set_flag(Z, self.regs.a == 0);
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, false);

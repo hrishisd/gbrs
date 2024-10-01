@@ -18,17 +18,11 @@ impl Cpu {
             mmu: Mmu::create(),
         }
     }
-    /// Fetch and decode a single instruction.
-    ///
-    /// Decodes the instruction pointed to be the current instruction pointer.
-    /// After this function returns the instruction pointer will point to the following instruction.
-    // fn fetch_and_decode(&mut self) -> Instruction {
-    // // TOOD: not sure if I should implement this or just decode + execute in one step without an intermediate type?
-    // }
 
-    /// Fetch, decode, and execute a single instruction
+    /// Fetch, decode, and execute a single instruction.
+    ///
     /// Returns the number of master clock cycles (at 4 MHz) that the instruction takes.
-    /// E.g. the executing `NOP` instruction will return 4
+    /// E.g. executing the `NOP` instruction will return 4
     fn step(&mut self) -> u8 {
         let opcode = self.mmu.read_byte(self.regs.pc);
         self.regs.pc += 1;
@@ -37,7 +31,7 @@ impl Cpu {
         t_cycles
     }
 
-    /// Execute a single instruction and return the number of system clock ticks (T-cycles) the instruction takes
+    /// Execute a single instruction and return the number of system clock ticks (T-cycles) the instruction takes.
     ///
     /// Precondition: PC points to the next byte after the opcode of the instruction being executed.
     ///
@@ -47,9 +41,7 @@ impl Cpu {
         use register_file::R16::{AF, BC, DE, HL};
         match opcode {
             // --- Misc / control instructions ---
-            // NOOP
             0x00 => self.nop(),
-            // Stop
             0x10 => self.stop(),
             0x27 => self.daa(),
             0x37 => self.scf(),
