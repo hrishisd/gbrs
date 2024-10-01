@@ -82,11 +82,9 @@ impl Cpu {
     /// Add the value and carry bit to A, and set flags accordingly
     fn alu_add(&mut self, x: u8, carry: bool) {
         use Flag::*;
-        let carry = self.regs.flag(C) as u8;
+        let carry = carry as u8;
         let a = self.regs.a;
-        let result = a
-            .wrapping_add(x)
-            .wrapping_add(self.regs.flag(Flag::C) as u8);
+        let result = a.wrapping_add(x).wrapping_add(carry);
 
         self.regs.set_flag(Z, result == 0);
         self.regs.set_flag(N, false);
@@ -171,10 +169,8 @@ impl Cpu {
         let result = a.wrapping_sub(x).wrapping_sub(carry as u8);
         self.regs.set_flag(Z, result == 0);
         self.regs.set_flag(N, true);
-        self.regs.set_flag(
-            H,
-            (a & 0x0F).wrapping_sub(x & 0xF).wrapping_sub(carry as u8) & 0x10 != 0,
-        );
+        self.regs
+            .set_flag(H, (a & 0x0F) < ((x & 0x0F) + carry as u8));
         self.regs.set_flag(C, x as u16 + carry as u16 > a as u16);
         self.regs.a = result;
     }
@@ -481,7 +477,7 @@ impl Cpu {
     /// ```
     fn alu_rl(&mut self, val: u8) -> u8 {
         use Flag::*;
-        let res = val.rotate_left(1) | (self.regs.flag(C) as u8);
+        let res = (val << 1) | (self.regs.flag(C) as u8);
         self.regs.set_flag(Z, res == 0);
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, false);
@@ -561,7 +557,7 @@ impl Cpu {
     /// ```
     pub fn alu_rr(&mut self, val: u8) -> u8 {
         use Flag::*;
-        let res = val.rotate_right(1) | ((self.regs.flag(C) as u8) << 7);
+        let res = (val >> 1) | ((self.regs.flag(C) as u8) << 7);
         self.regs.set_flag(Z, res == 0);
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, false);
@@ -748,7 +744,6 @@ impl Cpu {
     pub fn ld_r16_n16(&mut self, r: R16) -> u8 {
         let word = self.fetch_imm16();
         self.regs.set_r16(r, word);
-        self.regs.pc += 2;
         12
     }
 
@@ -786,11 +781,18 @@ impl Cpu {
     }
 
     /// LDH \[n16\],A
-    pub fn ldh_ref_n16_a(&mut self) -> u8 {
-        todo!("Unclear how this instruction should be implemented from docs")
+    ///
+    /// Also encoded as LD \[$FF00+n8\],A
+    pub fn ldh_ref_a8_a(&mut self) -> u8 {
+        let offset = self.fetch_imm8();
+        let addr = 0xFF00 + offset as u16;
+        self.mmu.write_byte(addr, self.regs.a);
+        12
     }
 
     /// LDH \[C\],A
+    ///
+    /// Also encoded as LD \[$FF00+C\], A
     pub fn ldh_ref_c_a(&mut self) -> u8 {
         let addr = 0xFF00 + (self.regs.c as u16);
         self.mmu.write_byte(addr, self.regs.a);
@@ -811,11 +813,18 @@ impl Cpu {
     }
 
     /// LDH A,\[n16\]
-    pub fn ldh_a_ref_n16(&mut self, addr: u8) -> u8 {
-        todo!("Unclear how this instruction should be implemented from docs")
+    ///
+    /// Also expressed as LD A,[$FF00+n8]
+    pub fn ldh_a_ref_a8(&mut self) -> u8 {
+        let offset = self.fetch_imm8();
+        let addr = 0xFF00 + offset as u16;
+        self.regs.a = self.mmu.read_byte(addr);
+        12
     }
 
     /// LDH A,\[C\]
+    ///
+    /// Also expressed as LD A,[$FF00+$C]
     pub fn ldh_a_ref_c(&mut self) -> u8 {
         let addr = 0xFF00 + self.regs.c as u16;
         self.regs.a = self.mmu.read_byte(addr);
@@ -896,11 +905,11 @@ impl Cpu {
         }
     }
 
-    /// JR n16
+    /// JR e8
     ///
     /// Relative Jump to address n16.
     /// The address is encoded as a signed 8-bit offset from the address immediately following the JR instruction, so the target address n16 must be between -128 and 127 bytes away.
-    pub fn jr_n16(&mut self) -> u8 {
+    pub fn jr_e8(&mut self) -> u8 {
         let offset = self.fetch_imm8() as i8;
         self.regs.pc = (self.regs.pc as i16 + offset as i16) as u16;
         12
@@ -917,25 +926,25 @@ impl Cpu {
         }
     }
 
+    /// RET
+    pub fn ret(&mut self) -> u8 {
+        self.regs.pc = self.pop_u16();
+        16
+    }
+
     /// RET cc
     pub fn ret_cc(&mut self, cc: CC) -> u8 {
         if self.check_cond(cc) {
-            self.regs.sp = self.pop_u16();
+            self.regs.pc = self.pop_u16();
             20
         } else {
             8
         }
     }
 
-    /// RET
-    pub fn ret(&mut self) -> u8 {
-        self.regs.sp = self.pop_u16();
-        16
-    }
-
     /// RETI
     pub fn reti(&mut self) -> u8 {
-        self.regs.sp = self.pop_u16();
+        self.regs.pc = self.pop_u16();
         self.ime = true;
         16
     }
@@ -956,15 +965,19 @@ impl Cpu {
     }
 
     /// Add the signed value and SP, return the result, and set flags
-    fn alu_add_sp_e8(&mut self, imm: i8) -> u16 {
+    fn alu_add_sp_e8(&mut self, offset: i8) -> u16 {
         use Flag::*;
-        let offset = self.fetch_imm8() as i8 as i16 as u16;
         let sp = self.regs.sp;
+        let result = sp.wrapping_add(offset as i16 as u16);
         self.regs.set_flag(Z, false);
         self.regs.set_flag(N, false);
-        self.regs.set_flag(H, (sp & 0x0F) + (offset & 0x0F) > 0x0F);
-        self.regs.set_flag(C, (sp & 0xFF) + (offset & 0xFF) > 0xFF);
-        sp.wrapping_add(offset)
+
+        let unsigned_offset = offset as u8;
+        self.regs
+            .set_flag(H, (sp & 0x0F) as u8 + (unsigned_offset & 0x0F) > 0x0F);
+        self.regs
+            .set_flag(C, (sp & 0xFF) + (unsigned_offset as u16 & 0xFF) > 0xFF);
+        result
     }
 
     /// ADD SP,e8
@@ -994,7 +1007,7 @@ impl Cpu {
     }
 
     /// LD [n16],SP
-    fn ld_n16_sp(&mut self, addr: u16) -> u8 {
+    pub fn ld_n16_sp(&mut self) -> u8 {
         let addr = self.fetch_imm16();
         let [lo, hi] = self.regs.sp.to_le_bytes();
         self.mmu.write_byte(addr, lo);
@@ -1043,39 +1056,85 @@ impl Cpu {
         16
     }
 
-    pub fn daa(&mut self) -> u8 {
-        todo!()
-    }
+    // --- Miscellaneous Instructions ---
 
-    pub fn scf(&mut self) -> u8 {
-        todo!()
-    }
-
+    /// Complement carry flag
     pub fn ccf(&mut self) -> u8 {
-        todo!()
+        use Flag::{C, H, N};
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, !self.regs.flag(C));
+        8
     }
 
+    /// Complement accumulator
     pub fn cpl(&mut self) -> u8 {
-        todo!()
+        use Flag::{H, N};
+        self.regs.a = !self.regs.a;
+        self.regs.set_flag(N, true);
+        self.regs.set_flag(H, true);
+        8
     }
 
-    pub fn halt(&mut self) -> u8 {
-        todo!()
+    /// Decimal adjust accumulator to get a correct BCD representation after an arithmetic instruction.
+    pub fn daa(&mut self) -> u8 {
+        // ref: https://ehaskins.com/2018-01-30%20Z80%20DAA/
+        use Flag::*;
+        let mut a = self.regs.a;
+        let mut adjust = 0;
+        let mut carry = self.regs.flag(C);
+
+        if self.regs.flag(H) || (!self.regs.flag(N) && (a & 0x0F) > 9) {
+            adjust |= 0x06;
+        }
+        if self.regs.flag(C) || (!self.regs.flag(N) && a > 0x99) {
+            adjust |= 0x60;
+            carry = true;
+        }
+
+        if self.regs.flag(N) {
+            a = a.wrapping_sub(adjust);
+        } else {
+            a = a.wrapping_add(adjust);
+        }
+
+        self.regs.a = a;
+        self.regs.set_flag(Z, self.regs.a == 0);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, carry);
+        4
     }
 
     pub fn di(&mut self) -> u8 {
-        todo!()
+        self.ime = false;
+        4
     }
 
     pub fn ei(&mut self) -> u8 {
+        self.ime = true;
+        4
+    }
+
+    pub fn halt(&mut self) -> u8 {
+        // TODO: implement while implementing interrupts
         todo!()
     }
 
     pub fn nop(&self) -> u8 {
-        todo!()
+        4
+    }
+
+    /// Set carry flag.
+    pub fn scf(&mut self) -> u8 {
+        use Flag::{C, H, N};
+        self.regs.set_flag(N, false);
+        self.regs.set_flag(H, false);
+        self.regs.set_flag(C, true);
+        4
     }
 
     pub fn stop(&self) -> u8 {
+        // TODO: implement this after figuring out power modes
         todo!()
     }
 }

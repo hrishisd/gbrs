@@ -332,7 +332,7 @@ impl Cpu {
 
             // --- Jumps/calls ---
             // relative jump
-            0x18 => self.jr_n16(),
+            0x18 => self.jr_e8(),
             0x20 => self.jr_cc_n16(CC::NZ),
             0x30 => self.jr_cc_n16(CC::NC),
             0x28 => self.jr_cc_n16(CC::Z),
@@ -385,7 +385,7 @@ impl Cpu {
             0xE5 => self.push_r16(R16::HL),
             0xF5 => self.push_r16(R16::AF),
             // misc
-            0x08 => todo!("I don't understand what this instruction is"),
+            0x08 => self.ld_n16_sp(),
             0xF8 => self.ld_hl_sp_e8(),
             0xF9 => self.ld_sp_hl(),
 
@@ -481,10 +481,10 @@ impl Cpu {
             0x75 => self.ld_ref_hl_r8(R8::L),
             0x77 => self.ld_ref_hl_r8(R8::A),
             // special loads
-            0xE0 => todo!("I don't understand what this instruction does"),
-            0xF0 => todo!("I don't understand what this instruction does"),
-            0xE2 => todo!("I don't understand what this instruction does"),
-            0xF2 => todo!("I don't understand what this instruction does"),
+            0xE0 => self.ldh_ref_a8_a(),
+            0xF0 => self.ldh_a_ref_a8(),
+            0xE2 => self.ldh_ref_c_a(),
+            0xF2 => self.ldh_a_ref_c(),
             0xEA => self.ld_ref_n16_a(),
             0xFA => self.ld_a_ref_n16(),
 
