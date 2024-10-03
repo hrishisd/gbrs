@@ -958,12 +958,6 @@ impl Cpu {
 
     // --- Stack Operations Instructions ---
 
-    /// ADD HL,SP
-    fn add_hl_sp(&mut self) -> u8 {
-        self.add_hl_r16(R16::SP);
-        8
-    }
-
     /// Add the signed value and SP, return the result, and set flags
     fn alu_add_sp_e8(&mut self, offset: i8) -> u16 {
         use Flag::*;
@@ -985,25 +979,6 @@ impl Cpu {
         let offset = self.fetch_imm8() as i8;
         self.regs.sp = self.alu_add_sp_e8(offset);
         16
-    }
-
-    /// DEC SP
-    fn dec_sp(&mut self) -> u8 {
-        self.regs.sp = self.regs.sp.wrapping_sub(1);
-        8
-    }
-
-    /// INC SP
-    fn inc_sp(&mut self) -> u8 {
-        self.regs.sp = self.regs.sp.wrapping_add(1);
-        8
-    }
-
-    /// LD SP,n16
-    fn ld_sp_n16(&mut self, addr: u16) -> u8 {
-        let addr = self.fetch_imm16();
-        self.regs.sp = addr;
-        12
     }
 
     /// LD [n16],SP
@@ -1029,25 +1004,11 @@ impl Cpu {
         8
     }
 
-    /// POP AF
-    fn pop_af(&mut self) -> u8 {
-        use Flag::*;
-        let af = self.pop_u16();
-        self.regs.set_af(af);
-        12
-    }
-
     /// POP r16
     pub fn pop_r16(&mut self, reg: R16) -> u8 {
         let word = self.pop_u16();
         self.regs.set_r16(reg, word);
         12
-    }
-
-    /// PUSH AF
-    fn push_af(&mut self) -> u8 {
-        self.push_u16(self.regs.af());
-        16
     }
 
     /// PUSH r16
@@ -1142,6 +1103,7 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use proptest::{prop_assert_eq, proptest};
+    const FAKE_ROM: [u8; 0] = [];
 
     use crate::cpu::{
         register_file::{Flag, R8},
@@ -1152,7 +1114,7 @@ mod tests {
         #[test]
         fn sub_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::create();
+            let mut cpu = Cpu::create(&FAKE_ROM);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1168,7 +1130,7 @@ mod tests {
         #[test]
         fn xor_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::create();
+            let mut cpu = Cpu::create(&FAKE_ROM);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1184,7 +1146,7 @@ mod tests {
         #[test]
         fn or_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::create();
+            let mut cpu = Cpu::create(&FAKE_ROM);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1200,7 +1162,7 @@ mod tests {
         #[test]
         fn and_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::create();
+            let mut cpu = Cpu::create(&FAKE_ROM);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1216,7 +1178,7 @@ mod tests {
         #[test]
         fn cp_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::create();
+            let mut cpu = Cpu::create(&FAKE_ROM);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }

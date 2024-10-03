@@ -1,4 +1,4 @@
-#![allow(unused)]
+// #![allow(unused)]
 use opcode::{RstVec, CC};
 use register_file::{Registers, R16, R8};
 
@@ -6,18 +6,19 @@ use crate::mmu::Mmu;
 
 mod opcode;
 mod register_file;
-struct Cpu {
-    regs: Registers,
+pub struct Cpu {
+    // TODO: remove pub
+    pub regs: Registers,
     mmu: Mmu,
     /// Controls whether any interrupt handlers are called, regardless of the contents of `IE`.
     ime: bool,
 }
 
 impl Cpu {
-    fn create() -> Self {
+    pub fn create(rom: &[u8]) -> Self {
         Cpu {
             regs: Registers::create(),
-            mmu: Mmu::create(),
+            mmu: Mmu::create(rom),
             ime: false,
         }
     }
@@ -26,8 +27,9 @@ impl Cpu {
     ///
     /// Returns the number of master clock cycles (at 4 MHz) that the instruction takes.
     /// E.g. executing the `NOP` instruction will return 4
-    fn step(&mut self) -> u8 {
+    pub fn step(&mut self) -> u8 {
         let opcode = self.mmu.read_byte(self.regs.pc);
+        println!("PC: {:X}, opcode: {opcode:X}", self.regs.pc);
         self.regs.pc += 1;
         let t_cycles = self.execute(opcode);
         assert!(t_cycles % 4 == 0 && t_cycles < 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
@@ -41,7 +43,6 @@ impl Cpu {
     /// While evaluating the opcode, `execute` will advance PC if the instruction consists of more bytes than just the opcode.
     /// ref: https://gbdev.io/gb-opcodes//optables/
     fn execute(&mut self, opcode: u8) -> u8 {
-        use register_file::R16::{AF, BC, DE, HL};
         match opcode {
             // --- Misc / control instructions ---
             0x00 => self.nop(),
@@ -618,6 +619,20 @@ impl Cpu {
             0xD3 | 0xDB | 0xDD | 0xE3 | 0xE4 | 0xEB | 0xEC | 0xED | 0xF4 | 0xFC | 0xFD => {
                 panic!("Instruction {opcode:X} is not supported on the game boy")
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Cpu;
+
+    #[test]
+    fn test_boot_rom() {
+        let boot_rom = include_bytes!("../roms/dmg_boot.bin");
+        let mut cpu = Cpu::create(boot_rom);
+        while cpu.regs.pc != 0x100 {
+            cpu.step();
         }
     }
 }

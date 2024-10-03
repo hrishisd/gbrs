@@ -5,13 +5,13 @@ use std::{
     time::{self, Duration, Instant},
 };
 
-const OFF_COLOR_CODE: i32 = 232;
-const ON_COLOR_CODE: i32 = 214;
+const _OFF_COLOR_CODE: i32 = 232;
+const _ON_COLOR_CODE: i32 = 214;
 
 mod cpu;
 mod mmu;
 
-fn test_rendering() {
+fn _test_rendering() {
     // generate random 160 wide x 144 tall grid of bools
     let mut rng = rand::thread_rng();
     let mut displays: Vec<[[bool; 160]; 144]> = Vec::new();
@@ -39,7 +39,7 @@ fn test_rendering() {
     thread::sleep(Duration::from_secs(5));
 
     for display in displays {
-        let display_string = generate_display_string(display);
+        let display_string = _generate_display_string(display);
         let start = Instant::now();
         print!("{}", display_string);
         stdout().flush().unwrap();
@@ -65,7 +65,7 @@ fn test_rendering() {
 }
 
 // Generate a string, that when printed in raw mode, draws the display to the terminal window
-fn generate_display_string(display: [[bool; 160]; 144]) -> String {
+fn _generate_display_string(display: [[bool; 160]; 144]) -> String {
     assert!(
         display.len() % 2 == 0,
         "Expected an even number of rows in the display, got {}",
@@ -81,9 +81,9 @@ fn generate_display_string(display: [[bool; 160]; 144]) -> String {
     let upper_half_block = '▀';
     let full_block = '█';
     // set the background color
-    output.push_str(format!("\x1b[48;5;{}m", OFF_COLOR_CODE).as_str());
+    output.push_str(format!("\x1b[48;5;{}m", _OFF_COLOR_CODE).as_str());
     // set the foreground color
-    output.push_str(format!("\x1b[38;5;{}m", ON_COLOR_CODE).as_str());
+    output.push_str(format!("\x1b[38;5;{}m", _ON_COLOR_CODE).as_str());
     for row_idx in (0..display.len()).step_by(2) {
         for col_idx in 0..display[0].len() {
             let top_pixel = display[row_idx][col_idx];
@@ -104,15 +104,34 @@ fn generate_display_string(display: [[bool; 160]; 144]) -> String {
     output
 }
 
+/// CPU frequency from pandocs: https://gbdev.io/pandocs/Specifications.html#dmg_clk
+const CYCLES_PER_SECOND: u32 = 4194304;
+const FPS: u32 = 60;
+const CYCLES_PER_FRAME: u32 = CYCLES_PER_SECOND / FPS;
+
 fn main() {
     // experiment();
-    test_rendering();
+    // test_rendering();
+    let mut cpu = cpu::Cpu::create(&[]);
+    loop {
+        // render single frame
+        let mut cycles_in_frame: u32 = 0;
+        while cycles_in_frame < CYCLES_PER_FRAME {
+            let cycles = cpu.step();
+            cycles_in_frame += cycles as u32;
+            // update timers
+            // update graphics
+            // handle interrupts
+        }
+        // render screen
+        // sleep
+    }
 }
 
 #[test]
 fn test_generate_display_string() {
     println!("Printing from here:");
     let display = [[true; 160]; 144];
-    let display_string = generate_display_string(display);
+    let display_string = _generate_display_string(display);
     println!("{}", display_string);
 }
