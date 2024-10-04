@@ -8,8 +8,7 @@ use std::{
 const _OFF_COLOR_CODE: i32 = 232;
 const _ON_COLOR_CODE: i32 = 214;
 
-mod cpu;
-mod mmu;
+use gbrs::cpu;
 
 fn _test_rendering() {
     // generate random 160 wide x 144 tall grid of bools
@@ -112,7 +111,7 @@ const CYCLES_PER_FRAME: u32 = CYCLES_PER_SECOND / FPS;
 fn main() {
     // experiment();
     // test_rendering();
-    let mut cpu = cpu::Cpu::create(&[]);
+    let mut cpu = crate::cpu::Cpu::create(&[]);
     loop {
         // render single frame
         let mut cycles_in_frame: u32 = 0;

@@ -469,7 +469,7 @@ impl Cpu {
 
     /// Rotate bits left, through the carry flag, setting flags appropriately.
     ///
-    /// ```
+    /// ```text
     ///   ┏━ Flags ━┓ ┏━━━━━━━ u8 ━━━━━━┓
     /// ┌─╂─   C   ←╂─╂─ b7 ← ... ← b0 ←╂─┐
     /// │ ┗━━━━━━━━━┛ ┗━━━━━━━━━━━━━━━━━┛ │
@@ -509,7 +509,7 @@ impl Cpu {
 
     /// Rotate left, setting flags appropriately
     ///
-    /// ```
+    /// ```text
     /// ┏━ Flags ━┓   ┏━━━━━━━ u8 ━━━━━━┓
     /// ┃    C   ←╂─┬─╂─ b7 ← ... ← b0 ←╂─┐
     /// ┗━━━━━━━━━┛ │ ┗━━━━━━━━━━━━━━━━━┛ │
@@ -549,7 +549,7 @@ impl Cpu {
 
     /// Rotate bits right, through the carry flag, setting flags appropriately.
     ///
-    /// ```
+    /// ```text
     ///   ┏━━━━━━━ u8 ━━━━━━┓ ┏━ Flags ━┓
     /// ┌─╂→ b7 → ... → b0 ─╂─╂→   C   ─╂─┐
     /// │ ┗━━━━━━━━━━━━━━━━━┛ ┗━━━━━━━━━┛ │
@@ -589,7 +589,7 @@ impl Cpu {
 
     /// Rotate right, setting flags appropriately
     ///
-    /// ```
+    /// ```text
     ///   ┏━━━━━━━ u8 ━━━━━━┓   ┏━ Flags ━┓
     /// ┌─╂→ b7 → ... → b0 ─╂─┬─╂→   C    ┃
     /// │ ┗━━━━━━━━━━━━━━━━━┛ │ ┗━━━━━━━━━┛
@@ -629,7 +629,7 @@ impl Cpu {
 
     /// Shift left arithmetically, setting flags appropriately
     ///
-    ///```
+    ///```text
     /// ┏━ Flags ━┓ ┏━━━━━━━ u8 ━━━━━━┓
     /// ┃    C   ←╂─╂─ b7 ← ... ← b0 ←╂─ 0
     /// ┗━━━━━━━━━┛ ┗━━━━━━━━━━━━━━━━━┛
@@ -663,7 +663,7 @@ impl Cpu {
     ///
     /// `b7` remains unchanged.
     ///
-    ///```
+    ///```text
     /// ┏━━━━━━ u8 ━━━━━━┓ ┏━ Flags ━┓
     /// ┃ b7 → ... → b0 ─╂─╂→   C    ┃
     /// ┗━━━━━━━━━━━━━━━━┛ ┗━━━━━━━━━┛
@@ -695,7 +695,7 @@ impl Cpu {
 
     /// Shift right logically, setting flags appropriately.
     ///
-    ///```
+    ///```text
     ///    ┏━━━━━━━ u8 ━━━━━━┓ ┏━ Flags ━┓
     /// 0 ─╂→ b7 → ... → b0 ─╂─╂→   C    ┃
     ///    ┗━━━━━━━━━━━━━━━━━┛ ┗━━━━━━━━━┛
