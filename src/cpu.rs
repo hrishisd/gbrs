@@ -1,3 +1,5 @@
+use std::io::Write;
+
 // #![allow(unused)]
 use opcode::{RstVec, CC};
 use register_file::{Registers, R16, R8};
@@ -12,6 +14,7 @@ pub struct Cpu {
     mmu: Mmu,
     /// Controls whether any interrupt handlers are called, regardless of the contents of `IE`.
     ime: bool,
+    dbg_log_file: Option<std::fs::File>,
 }
 
 impl Cpu {
@@ -20,23 +23,54 @@ impl Cpu {
             regs: Registers::create(),
             mmu: Mmu::create(rom),
             ime: false,
+            dbg_log_file: None,
+        }
+    }
+
+    /// Initializes the CPU's state to the state it should have immediately after executing the boot ROM
+    fn debug_mode(test_rom: &[u8], dbg_log_file: std::fs::File) -> Self {
+        Cpu {
+            regs: Registers {
+                a: 0x01,
+                f: 0xB0,
+                b: 0x00,
+                c: 0x13,
+                d: 0x00,
+                e: 0xD8,
+                h: 0x01,
+                l: 0x4D,
+                sp: 0xFFFE,
+                pc: 0x0100,
+            },
+            mmu: Mmu::create(&test_rom),
+            ime: false,
+            dbg_log_file: Some(dbg_log_file),
         }
     }
 
     /// Fetch, decode, and execute a single instruction.
     ///
-    /// Returns the number of master clock cycles (at 4 MHz) that the instruction takes.
+    /// Returns the number of master clock cycles (at 4 MiHz) that the instruction takes.
     /// E.g. executing the `NOP` instruction will return 4
     pub fn step(&mut self) -> u8 {
+        if let Some(file) = &mut self.dbg_log_file {
+            writeln!(
+                file,
+                "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
+                self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3)
+            )
+            .unwrap();
+        }
+
         let opcode = self.mmu.read_byte(self.regs.pc);
         println!("PC: {:X}, opcode: {opcode:X}", self.regs.pc);
         self.regs.pc += 1;
         let t_cycles = self.execute(opcode);
-        assert!(t_cycles % 4 == 0 && t_cycles < 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
+        assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
         t_cycles
     }
 
-    /// Execute a single instruction and return the number of system clock ticks (T-cycles) the instruction takes.
+    /// Execute a single instruction and return the number of system clock cycles (T-cycles) the instruction takes.
     ///
     /// Precondition: PC points to the next byte after the opcode of the instruction being executed.
     ///
@@ -628,10 +662,21 @@ mod test {
     use super::Cpu;
 
     #[test]
-    fn test_boot_rom() {
+    fn run_boot_rom() {
         let boot_rom = include_bytes!("../roms/dmg_boot.bin");
         let mut cpu = Cpu::create(boot_rom);
         while cpu.regs.pc != 0x100 {
+            cpu.step();
+        }
+    }
+
+    #[test]
+    fn test_debug_rom() {
+        let file = std::fs::File::create("out.txt").unwrap();
+        let test_rom = include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb");
+        // let test_rom = include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/01-special.gb");
+        let mut cpu = Cpu::debug_mode(test_rom, file);
+        loop {
             cpu.step();
         }
     }
