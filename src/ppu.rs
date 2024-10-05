@@ -1,3 +1,5 @@
+use crate::util::U8Ext;
+
 #[derive(Debug, Clone)]
 pub struct Ppu {
     pub vram: [u8; 0x2000],
@@ -18,6 +20,15 @@ pub struct Ppu {
     pub obj_size: ObjSize,
     pub obj_enabled: bool,
     pub bg_enabled: bool,
+
+    pub bg_color_palette: BgColorPalette,
+    pub bg_viewport_offset: Coord,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Coord {
+    pub x: u8,
+    pub y: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +108,36 @@ enum Color {
     Black,
 }
 
+impl From<[bool; 2]> for Color {
+    /// Bits in big-endian order
+    ///
+    /// i.e. `bits[0]` is the higher-order bit
+    fn from(bits: [bool; 2]) -> Self {
+        match bits {
+            [false, false] => Color::White,
+            [false, true] => Color::LightGray,
+            [true, false] => Color::DarkGray,
+            [true, true] => Color::Black,
+        }
+    }
+}
+
+/// field i of the strict corresponds to the ith color id
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BgColorPalette(Color, Color, Color, Color);
+
+impl From<u8> for BgColorPalette {
+    fn from(value: u8) -> Self {
+        let [b7, b6, b5, b4, b3, b2, b1, b0] = value.bits();
+        BgColorPalette(
+            [b1, b0].into(),
+            [b3, b2].into(),
+            [b5, b4].into(),
+            [b7, b6].into(),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     /// Takes 80 clock cycles. While in this mode, the PPU fetches assets from memory
@@ -127,6 +168,8 @@ impl Ppu {
             obj_size: ObjSize::from_bit(false),
             obj_enabled: false,
             bg_enabled: false,
+            bg_color_palette: BgColorPalette::from(0u8),
+            bg_viewport_offset: Coord { x: 0, y: 0 },
         }
     }
 

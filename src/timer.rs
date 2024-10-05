@@ -55,6 +55,6 @@ impl Timer {
                 return true;
             }
         }
-        return false;
+        false
     }
 }

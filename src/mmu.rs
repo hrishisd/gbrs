@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use crate::ppu::{BgAndWindowTileDataArea, ObjSize, Ppu, TileMapArea};
+use crate::ppu::{BgAndWindowTileDataArea, BgColorPalette, ObjSize, Ppu, TileMapArea};
 use crate::timer::{Timer, TimerFrequency};
 use crate::util::U8Ext;
 use core::panic;
@@ -93,7 +93,7 @@ impl Mmu {
             // io registers
             0xFF00..=0xFF7F => {
                 // TODO: implement
-                return match addr {
+                match addr {
                     0xFF00 => {
                         // joypad input
                         0
@@ -113,9 +113,6 @@ impl Mmu {
                         // TODO: wave pattern
                         0
                     }
-                    // TODO: remove hardcoding
-                    0xFF44 => 0x90,
-                    // 0xFF44 => self.ppu.line,
                     // LCD control
                     0xFF40 => u8::from_bits([
                         self.ppu.lcd_enabled,
@@ -132,15 +129,11 @@ impl Mmu {
                         todo!("LCD status")
                     }
                     // Background viewport position
-                    0xFF42 => {
-                        todo!("SCY background viewport y position")
-                    }
-                    0xFF43 => {
-                        todo!("SCX background viewport x position")
-                    }
-                    0xFF44 => {
-                        panic!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
-                    }
+                    0xFF42 => self.ppu.bg_viewport_offset.y,
+                    0xFF43 => self.ppu.bg_viewport_offset.x,
+                    // TODO: remove hardcoding
+                    0xFF44 => 0x90,
+                    // 0xFF44 => self.ppu.line,
                     0xFF47 => {
                         todo!("BGP: background palette data");
                     }
@@ -175,7 +168,7 @@ impl Mmu {
                         0
                     }
                     _ => panic!("BUG: unhandled IO register read for addr: {addr:X}"),
-                };
+                }
             }
             // high ram?
             0xFF80..=0xFFFE => self.high_ram[addr as usize - 0xFF80],
@@ -218,7 +211,7 @@ impl Mmu {
                 }
                 0xFF01 | 0xFF02 => {
                     // serial transfer
-                    todo!()
+                    // This is a noop to pass Blargg's test ROMs
                 }
                 0xFF04 => {
                     self.divider.value = 0;
@@ -279,17 +272,15 @@ impl Mmu {
                 }
                 // Background viewport position
                 0xFF42 => {
-                    todo!("SCY background viewport y position")
+                    self.ppu.bg_viewport_offset.y = byte;
                 }
                 0xFF43 => {
-                    todo!("SCX background viewport x position")
+                    self.ppu.bg_viewport_offset.x = byte;
                 }
                 0xFF44 => {
                     panic!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
                 }
-                0xFF47 => {
-                    todo!("BGP: background palette data");
-                }
+                0xFF47 => self.ppu.bg_color_palette = BgColorPalette::from(byte),
                 0xFF48 | 0xFF49 => {
                     todo!("OBJ palette 0,1 data")
                 }

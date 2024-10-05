@@ -42,7 +42,7 @@ impl Cpu {
                 sp: 0xFFFE,
                 pc: 0x0100,
             },
-            mmu: Mmu::create(&test_rom),
+            mmu: Mmu::create(test_rom),
             ime: false,
             dbg_log_file: Some(dbg_log_file),
         }
