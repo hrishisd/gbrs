@@ -12,7 +12,7 @@ pub struct Cpu {
     // TODO: remove pub
     pub regs: Registers,
     mmu: Mmu,
-    /// Controls whether any interrupt handlers are called, regardless of the contents of `IE`.
+    /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
     ime: bool,
     dbg_log_file: Option<std::fs::File>,
 }
@@ -28,7 +28,7 @@ impl Cpu {
     }
 
     /// Initializes the CPU's state to the state it should have immediately after executing the boot ROM
-    fn debug_mode(test_rom: &[u8], dbg_log_file: std::fs::File) -> Self {
+    fn _debug_mode(test_rom: &[u8], dbg_log_file: std::fs::File) -> Self {
         Cpu {
             regs: Registers {
                 a: 0x01,
@@ -67,6 +67,19 @@ impl Cpu {
         self.regs.pc += 1;
         let t_cycles = self.execute(opcode);
         assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
+
+        self.mmu.step(t_cycles);
+
+        // TODO:
+        // if interrupt {
+        //     // do something with PC?
+        //     handle interrupt
+        //     return t_cycles + 12?
+        // } else {
+        //     // increment PC to point to next instruction
+        //     return t_cycles
+        // }
+
         t_cycles
     }
 
@@ -675,7 +688,7 @@ mod test {
         let file = std::fs::File::create("out.txt").unwrap();
         let test_rom = include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb");
         // let test_rom = include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/01-special.gb");
-        let mut cpu = Cpu::debug_mode(test_rom, file);
+        let mut cpu = Cpu::_debug_mode(test_rom, file);
         loop {
             cpu.step();
         }

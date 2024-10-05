@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use crate::ppu::{BgAndWindowTileDataArea, ObjSize, Ppu, TileMapArea};
 use crate::timer::{Timer, TimerFrequency};
 use crate::util::U8Ext;
 use core::panic;
@@ -10,13 +11,15 @@ pub struct Mmu {
     ext_ram: [u8; 0x2000],
     work_ram: [u8; 0x2000],
     high_ram: [u8; 0x80],
-
-    // TODO: replace this with a GPU implementation
-    vram: [u8; 0x0200],
+    ppu: Ppu,
     /// A set of flags that indicates whether the interrupt handler for each corresponding piece of hardware may be called.
     ///
     /// also referred to as `IE`
-    interrupt_enable_flags: InterruptFlags,
+    interrupts_enabled: InterruptFlags,
+    /// A set of flags indicates that an interrupt has been signaled.
+    ///
+    /// Any set flags only indicate that an interrupt is being *requested*. The actual *execution* of the interrupt handler only happens if both the `IME` register and the corresponding flag in `IE` are set.
+    interrupts_requested: InterruptFlags,
     /// TODO: handle timer interrupts
     timer: Timer,
     /// TODO: reset when executing STOP instruction and only begin ticking once stop mode ends
@@ -46,11 +49,22 @@ impl Mmu {
             ext_ram: [0; 0x2000],
             work_ram: [0; 0x2000],
             high_ram: [0; 0x80],
-            vram: [0; 0x0200],
-            interrupt_enable_flags: InterruptFlags::from_byte(0x00),
+            ppu: Ppu::new(),
+            interrupts_enabled: InterruptFlags::from_byte(0x00),
+            interrupts_requested: InterruptFlags::from_byte(0x00),
             timer: Timer::new(TimerFrequency::F4KiHz),
             divider: Timer::new(TimerFrequency::F16KiHz),
         }
+    }
+
+    pub fn step(&mut self, t_cycles: u8) {
+        let overflowed = self.timer.update(t_cycles);
+        if overflowed {
+            self.interrupts_requested.timer = true;
+        }
+        self.ppu.step(t_cycles);
+        self.divider.update(t_cycles);
+        // TODO: return requested interrupts to CPU?
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
@@ -62,7 +76,7 @@ impl Mmu {
             // VRAM
             0x8000..=0x9FFF => {
                 // TODO: replace this with gpu implementation
-                self.vram[addr as usize - 0x8000]
+                self.ppu.vram[addr as usize - 0x8000]
             }
             // external RAM
             0xA000..=0xBFFF => self.ext_ram[(addr & 0x1FFF) as usize],
@@ -99,9 +113,46 @@ impl Mmu {
                         // TODO: wave pattern
                         0
                     }
-                    0xFF40..=0xFF4B => {
-                        // TODO: LCD constrol, status, position, scrolling, and palettes
-                        0
+                    // TODO: remove hardcoding
+                    0xFF44 => 0x90,
+                    // 0xFF44 => self.ppu.line,
+                    // LCD control
+                    0xFF40 => u8::from_bits([
+                        self.ppu.lcd_enabled,
+                        self.ppu.window_tile_map_area.to_bit(),
+                        self.ppu.window_enabled,
+                        self.ppu.bg_and_window_data_tile_area.to_bit(),
+                        self.ppu.bg_tile_map_area.to_bit(),
+                        self.ppu.obj_size.to_bit(),
+                        self.ppu.obj_enabled,
+                        self.ppu.bg_enabled,
+                    ]),
+                    // LCD status
+                    0xFF41 => {
+                        todo!("LCD status")
+                    }
+                    // Background viewport position
+                    0xFF42 => {
+                        todo!("SCY background viewport y position")
+                    }
+                    0xFF43 => {
+                        todo!("SCX background viewport x position")
+                    }
+                    0xFF44 => {
+                        panic!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
+                    }
+                    0xFF47 => {
+                        todo!("BGP: background palette data");
+                    }
+                    0xFF48 | 0xFF49 => {
+                        todo!("OBJ palette 0,1 data")
+                    }
+                    // Window position
+                    0xFF4A => {
+                        todo!("SCY background viewport y position")
+                    }
+                    0xFF4B => {
+                        todo!("SCX background viewport x position")
                     }
                     0xFF4F => {
                         // VRAM bank select
@@ -129,7 +180,7 @@ impl Mmu {
             // high ram?
             0xFF80..=0xFFFE => self.high_ram[addr as usize - 0xFF80],
             // interrupt enable register
-            0xFFFF => self.interrupt_enable_flags.as_byte(),
+            0xFFFF => self.interrupts_enabled.as_byte(),
         }
     }
 
@@ -147,9 +198,7 @@ impl Mmu {
             0x4000..=0x7FFF => self.rom_bank_n[(addr & 0x3FFF) as usize] = byte,
             // VRAM
             0x8000..=0x9FFF => {
-                // TODO
-                // addr & 0x1FFF
-                self.vram[addr as usize - 0x8000] = byte;
+                self.ppu.vram[addr as usize - 0x8000] = byte;
             }
             // external RAM
             0xA000..=0xBFFF => self.ext_ram[(addr & 0x1FFF) as usize] = byte,
@@ -194,7 +243,7 @@ impl Mmu {
                     self.timer.frequency = frequency;
                 }
                 0xFF0F => {
-                    self.interrupt_enable_flags = InterruptFlags::from_byte(byte);
+                    self.interrupts_enabled = InterruptFlags::from_byte(byte);
                 }
                 0xFF10..=0xFF26 => {
                     // TODO: implement audio
@@ -203,9 +252,53 @@ impl Mmu {
                     // wave pattern
                     todo!();
                 }
-                0xFF40..=0xFF4B => {
-                    // LCD control, status, position, scrolling, and palettes
-                    todo!();
+                // LCD control
+                0xFF40 => {
+                    let [lcd_enable, window_tile_map_bit, window_enable, bg_and_window_tile_data_bit, bg_tile_map_area_bit, obj_size_bit, obj_enable, bg_enable] =
+                        byte.bits();
+                    // TODO: assert that lcd only goes from false->true when ppu is in VBlank mode
+                    self.ppu.lcd_enabled = lcd_enable;
+                    self.ppu.window_tile_map_area = TileMapArea::from_bit(window_tile_map_bit);
+                    self.ppu.window_enabled = window_enable;
+                    self.ppu.bg_and_window_data_tile_area = if bg_and_window_tile_data_bit {
+                        BgAndWindowTileDataArea::X8000
+                    } else {
+                        BgAndWindowTileDataArea::X8800
+                    };
+                    self.ppu.obj_size = if obj_size_bit {
+                        ObjSize::Dim8x16
+                    } else {
+                        ObjSize::Dim8x8
+                    };
+                    self.ppu.obj_enabled = obj_enable;
+                    self.ppu.bg_enabled = bg_enable;
+                }
+                // LCD status
+                0xFF41 => {
+                    todo!("LCD status")
+                }
+                // Background viewport position
+                0xFF42 => {
+                    todo!("SCY background viewport y position")
+                }
+                0xFF43 => {
+                    todo!("SCX background viewport x position")
+                }
+                0xFF44 => {
+                    panic!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
+                }
+                0xFF47 => {
+                    todo!("BGP: background palette data");
+                }
+                0xFF48 | 0xFF49 => {
+                    todo!("OBJ palette 0,1 data")
+                }
+                // Window position
+                0xFF4A => {
+                    todo!("SCY background viewport y position")
+                }
+                0xFF4B => {
+                    todo!("SCX background viewport x position")
                 }
                 0xFF4F => {
                     // VRAM bank select
@@ -234,7 +327,7 @@ impl Mmu {
                 self.high_ram[addr as usize - 0xFF80] = byte;
             }
             // interrupt enable register
-            0xFFFF => self.interrupt_enable_flags = InterruptFlags::from_byte(byte),
+            0xFFFF => self.interrupts_enabled = InterruptFlags::from_byte(byte),
         }
     }
 
