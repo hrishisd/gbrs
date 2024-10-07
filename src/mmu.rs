@@ -15,11 +15,11 @@ pub struct Mmu {
     /// A set of flags that indicates whether the interrupt handler for each corresponding piece of hardware may be called.
     ///
     /// also referred to as `IE`
-    interrupts_enabled: InterruptFlags,
+    pub interrupts_enabled: InterruptFlags,
     /// A set of flags indicates that an interrupt has been signaled.
     ///
     /// Any set flags only indicate that an interrupt is being *requested*. The actual *execution* of the interrupt handler only happens if both the `IME` register and the corresponding flag in `IE` are set.
-    interrupts_requested: InterruptFlags,
+    pub interrupts_requested: InterruptFlags,
     /// TODO: handle timer interrupts
     timer: Timer,
     /// TODO: reset when executing STOP instruction and only begin ticking once stop mode ends
@@ -100,7 +100,6 @@ impl Mmu {
                 // TODO: timer and divider
                 0
             }
-            // TODO: Interrupt flag
             0xFF0F => self.interrupts_requested.into(),
             0xFF10..=0xFF26 => {
                 // TODO: audio
@@ -335,12 +334,52 @@ impl Mmu {
 
 /// Flags for each interrupt handler
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct InterruptFlags {
+pub struct InterruptFlags {
     joypad: bool,
     serial: bool,
     timer: bool,
     lcd: bool,
     vblank: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterruptKind {
+    Joypad,
+    Serial,
+    Timer,
+    Lcd,
+    Vblank,
+}
+
+impl InterruptFlags {
+    pub fn get(self, kind: InterruptKind) -> bool {
+        match kind {
+            InterruptKind::Joypad => self.joypad,
+            InterruptKind::Serial => self.serial,
+            InterruptKind::Timer => self.timer,
+            InterruptKind::Lcd => self.lcd,
+            InterruptKind::Vblank => self.vblank,
+        }
+    }
+
+    pub fn set(self, interrupt_kind: InterruptKind, arg: bool) -> Self {
+        match interrupt_kind {
+            InterruptKind::Joypad => Self {
+                joypad: arg,
+                ..self
+            },
+            InterruptKind::Serial => Self {
+                serial: arg,
+                ..self
+            },
+            InterruptKind::Timer => Self { timer: arg, ..self },
+            InterruptKind::Lcd => Self { lcd: arg, ..self },
+            InterruptKind::Vblank => Self {
+                vblank: arg,
+                ..self
+            },
+        }
+    }
 }
 
 impl From<u8> for InterruptFlags {

@@ -7,7 +7,7 @@ use std::{
 use opcode::{RstVec, CC};
 use register_file::{Registers, R16, R8};
 
-use crate::mmu::Mmu;
+use crate::mmu::{InterruptKind, Mmu};
 
 mod opcode;
 mod register_file;
@@ -15,8 +15,10 @@ pub struct Cpu {
     // TODO: remove pub
     pub regs: Registers,
     mmu: Mmu,
+    /// AKA, the `IME` flag.
+    ///
     /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
-    ime: bool,
+    interrupts_enabled: bool,
     dbg_log_file: Option<BufWriter<File>>,
 }
 
@@ -25,7 +27,7 @@ impl Cpu {
         Cpu {
             regs: Registers::create(),
             mmu: Mmu::create(rom),
-            ime: false,
+            interrupts_enabled: false,
             dbg_log_file: None,
         }
     }
@@ -46,7 +48,7 @@ impl Cpu {
                 pc: 0x0100,
             },
             mmu: Mmu::create(test_rom),
-            ime: false,
+            interrupts_enabled: false,
             dbg_log_file: Some(dbg_log_file),
         }
     }
@@ -73,16 +75,27 @@ impl Cpu {
 
         self.mmu.step(t_cycles);
 
-        // TODO:
-        // if interrupt {
-        //     // do something with PC?
-        //     handle interrupt
-        //     return t_cycles + 12?
-        // } else {
-        //     // increment PC to point to next instruction
-        //     return t_cycles
-        // }
-
+        if self.interrupts_enabled {
+            use InterruptKind::*;
+            for interrupt_kind in [Vblank, Lcd, Serial, Timer, Joypad] {
+                if self.mmu.interrupts_requested.get(interrupt_kind)
+                    && self.mmu.interrupts_enabled.get(interrupt_kind)
+                {
+                    self.interrupts_enabled = false;
+                    self.mmu.interrupts_requested.set(interrupt_kind, false);
+                    self.push_u16(self.regs.pc);
+                    self.regs.pc = match interrupt_kind {
+                        Joypad => 0x60,
+                        Serial => 0x58,
+                        Timer => 0x50,
+                        Lcd => 0x48,
+                        Vblank => 0x40,
+                    };
+                    self.mmu.step(12);
+                    return t_cycles + 12;
+                }
+            }
+        }
         t_cycles
     }
 
