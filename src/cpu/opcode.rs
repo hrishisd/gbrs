@@ -47,6 +47,7 @@ impl Cpu {
 
     /// Pushes the word on to the stack in little-endian order (the lower-order byte is at the lower address).
     fn push_u16(&mut self, word: u16) {
+        println!("PUSH {:#04X} at addr {:#04X}", word, self.regs.sp);
         let [lo, hi] = word.to_le_bytes();
         self.regs.sp = self.regs.sp.wrapping_sub(1);
         self.mmu.write_byte(self.regs.sp, hi);
@@ -59,6 +60,11 @@ impl Cpu {
         self.regs.sp = self.regs.sp.wrapping_add(1);
         let hi = self.mmu.read_byte(self.regs.sp);
         self.regs.sp = self.regs.sp.wrapping_add(1);
+        println!(
+            "POP {:04X} at addr {:#04X}",
+            u16::from_le_bytes([lo, hi]),
+            self.regs.sp
+        );
         u16::from_le_bytes([lo, hi])
     }
 
@@ -1008,6 +1014,9 @@ impl Cpu {
     pub fn pop_r16(&mut self, reg: R16) -> u8 {
         let word = self.pop_u16();
         self.regs.set_r16(reg, word);
+        if reg == R16::AF {
+            self.regs.f &= 0xF0; // lower 4 bits of F are always 0
+        }
         12
     }
 

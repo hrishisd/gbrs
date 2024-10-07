@@ -1,4 +1,7 @@
-use std::io::Write;
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+};
 
 // #![allow(unused)]
 use opcode::{RstVec, CC};
@@ -14,7 +17,7 @@ pub struct Cpu {
     mmu: Mmu,
     /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
     ime: bool,
-    dbg_log_file: Option<std::fs::File>,
+    dbg_log_file: Option<BufWriter<File>>,
 }
 
 impl Cpu {
@@ -28,7 +31,7 @@ impl Cpu {
     }
 
     /// Initializes the CPU's state to the state it should have immediately after executing the boot ROM
-    fn _debug_mode(test_rom: &[u8], dbg_log_file: std::fs::File) -> Self {
+    fn _debug_mode(test_rom: &[u8], dbg_log_file: BufWriter<File>) -> Self {
         Cpu {
             regs: Registers {
                 a: 0x01,
@@ -63,7 +66,7 @@ impl Cpu {
         }
 
         let opcode = self.mmu.read_byte(self.regs.pc);
-        println!("PC: {:X}, opcode: {opcode:X}", self.regs.pc);
+        println!("  PC: {:#04X}, opcode: {:#02X}", self.regs.pc, opcode);
         self.regs.pc += 1;
         let t_cycles = self.execute(opcode);
         assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
@@ -404,7 +407,7 @@ impl Cpu {
             0xC4 => self.call_cc_n16(CC::NZ),
             0xD4 => self.call_cc_n16(CC::NC),
             0xCC => self.call_cc_n16(CC::Z),
-            0xDC => self.call_cc_n16(CC::Z),
+            0xDC => self.call_cc_n16(CC::C),
             0xCD => self.call_n16(),
             // call address vec
             0xC7 => self.rst_vec(RstVec::X00),
@@ -672,6 +675,8 @@ impl Cpu {
 
 #[cfg(test)]
 mod test {
+    use std::io::BufWriter;
+
     use super::Cpu;
 
     #[test]
@@ -686,10 +691,14 @@ mod test {
     #[test]
     fn test_debug_rom() {
         let file = std::fs::File::create("out.txt").unwrap();
-        let test_rom = include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb");
-        // let test_rom = include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/01-special.gb");
+        let file = BufWriter::new(file);
+        let test_rom =
+            include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/02-interrupts.gb");
         let mut cpu = Cpu::_debug_mode(test_rom, file);
+        let mut line = 1;
         loop {
+            println!("L: {}", line);
+            line += 1;
             cpu.step();
         }
     }

@@ -50,8 +50,8 @@ impl Mmu {
             work_ram: [0; 0x2000],
             high_ram: [0; 0x80],
             ppu: Ppu::new(),
-            interrupts_enabled: InterruptFlags::from_byte(0x00),
-            interrupts_requested: InterruptFlags::from_byte(0x00),
+            interrupts_enabled: InterruptFlags::from(0x00),
+            interrupts_requested: InterruptFlags::from(0x00),
             timer: Timer::new(TimerFrequency::F4KiHz),
             divider: Timer::new(TimerFrequency::F16KiHz),
         }
@@ -68,7 +68,7 @@ impl Mmu {
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
-        match addr {
+        let res = match addr {
             // ROM bank 0
             0x0000..=0x3FFF => self.rom_bank_0[addr as usize],
             // ROM bank 01-NN
@@ -91,99 +91,102 @@ impl Mmu {
                 panic!("Program accessed invalid memory: {addr:X}")
             }
             // io registers
-            0xFF00..=0xFF7F => {
-                // TODO: implement
-                match addr {
-                    0xFF00 => {
-                        // joypad input
-                        0
-                    }
-                    0xFF01 | 0xFF02 => 0, // TODO: serial
-                    0xFF04..=0xFF07 => {
-                        // TODO: timer and divider
-                        0
-                    }
-                    // TODO: Interrupt flag
-                    0xFF0F => 0,
-                    0xFF10..=0xFF26 => {
-                        // TODO: audio
-                        0
-                    }
-                    0xFF30..=0xFF3F => {
-                        // TODO: wave pattern
-                        0
-                    }
-                    // LCD control
-                    0xFF40 => u8::from_bits([
-                        self.ppu.lcd_enabled,
-                        self.ppu.window_tile_map_area.to_bit(),
-                        self.ppu.window_enabled,
-                        self.ppu.bg_and_window_data_tile_area.to_bit(),
-                        self.ppu.bg_tile_map_area.to_bit(),
-                        self.ppu.obj_size.to_bit(),
-                        self.ppu.obj_enabled,
-                        self.ppu.bg_enabled,
-                    ]),
-                    // LCD status
-                    0xFF41 => {
-                        todo!("LCD status")
-                    }
-                    // Background viewport position
-                    0xFF42 => self.ppu.bg_viewport_offset.y,
-                    0xFF43 => self.ppu.bg_viewport_offset.x,
-                    // TODO: remove hardcoding
-                    0xFF44 => 0x90,
-                    // 0xFF44 => self.ppu.line,
-                    0xFF47 => {
-                        todo!("BGP: background palette data");
-                    }
-                    0xFF48 | 0xFF49 => {
-                        todo!("OBJ palette 0,1 data")
-                    }
-                    // Window position
-                    0xFF4A => {
-                        todo!("SCY background viewport y position")
-                    }
-                    0xFF4B => {
-                        todo!("SCX background viewport x position")
-                    }
-                    0xFF4F => {
-                        // VRAM bank select
-                        0
-                    }
-                    0xFF50 => {
-                        // set to non-zero to disable boot ROM
-                        todo!("unmap boot ROM")
-                    }
-                    0xFF51..=0xFF55 => {
-                        // VRAM DMA
-                        0
-                    }
-                    0xF680..=0xFF6B => {
-                        // BG / OBJ palettes
-                        0
-                    }
-                    0xFF70 => {
-                        // WRAM bank select
-                        0
-                    }
-                    _ => panic!("BUG: unhandled IO register read for addr: {addr:X}"),
-                }
+            0xFF00 => {
+                // joypad input
+                0
+            }
+            0xFF01 | 0xFF02 => 0, // TODO: serial
+            0xFF04..=0xFF07 => {
+                // TODO: timer and divider
+                0
+            }
+            // TODO: Interrupt flag
+            0xFF0F => self.interrupts_requested.into(),
+            0xFF10..=0xFF26 => {
+                // TODO: audio
+                0
+            }
+            0xFF30..=0xFF3F => {
+                // TODO: wave pattern
+                0
+            }
+            // LCD control
+            0xFF40 => u8::from_bits([
+                self.ppu.lcd_enabled,
+                self.ppu.window_tile_map_area.to_bit(),
+                self.ppu.window_enabled,
+                self.ppu.bg_and_window_data_tile_area.to_bit(),
+                self.ppu.bg_tile_map_area.to_bit(),
+                self.ppu.obj_size.to_bit(),
+                self.ppu.obj_enabled,
+                self.ppu.bg_enabled,
+            ]),
+            // LCD status
+            0xFF41 => {
+                todo!("LCD status")
+            }
+            // Background viewport position
+            0xFF42 => self.ppu.bg_viewport_offset.y,
+            0xFF43 => self.ppu.bg_viewport_offset.x,
+            // TODO: remove hardcoding
+            0xFF44 => 0x90,
+            // 0xFF44 => self.ppu.line,
+            0xFF47 => {
+                todo!("BGP: background palette data");
+            }
+            0xFF48 | 0xFF49 => {
+                todo!("OBJ palette 0,1 data")
+            }
+            // Window position
+            0xFF4A => {
+                todo!("SCY background viewport y position")
+            }
+            0xFF4B => {
+                todo!("SCX background viewport x position")
+            }
+            0xFF4F => {
+                // VRAM bank select
+                0
+            }
+            0xFF50 => {
+                // set to non-zero to disable boot ROM
+                todo!("unmap boot ROM")
+            }
+            0xFF51..=0xFF55 => {
+                // VRAM DMA
+                0
+            }
+            0xF680..=0xFF6B => {
+                // BG / OBJ palettes
+                0
+            }
+            0xFF70 => {
+                // WRAM bank select
+                0
             }
             // high ram?
             0xFF80..=0xFFFE => self.high_ram[addr as usize - 0xFF80],
             // interrupt enable register
-            0xFFFF => self.interrupts_enabled.as_byte(),
-        }
+            0xFFFF => self.interrupts_enabled.into(),
+            _ => panic!("Unhandled IO register read for addr: {addr:X}"),
+        };
+        // println!("MMU: Read byte {:#X}: {:#X}", addr, res);
+        res
     }
 
     pub fn read_word(&self, addr: u16) -> u16 {
         let lo = self.read_byte(addr);
         let hi = self.read_byte(addr + 1);
+        // println!(
+        //     "MMU: Read word {:#X}: {:#X}",
+        //     addr,
+        //     u16::from_le_bytes([lo, hi])
+        // );
         u16::from_le_bytes([lo, hi])
     }
 
     pub fn write_byte(&mut self, addr: u16, byte: u8) {
+        // println!("MMU: Write byte {:#X}: {:#X}", addr, byte);
         match addr {
             // ROM bank 0
             0x0000..=0x3FFF => self.rom_bank_0[addr as usize] = byte,
@@ -236,7 +239,7 @@ impl Mmu {
                     self.timer.frequency = frequency;
                 }
                 0xFF0F => {
-                    self.interrupts_enabled = InterruptFlags::from_byte(byte);
+                    self.interrupts_requested = InterruptFlags::from(byte);
                 }
                 0xFF10..=0xFF26 => {
                     // TODO: implement audio
@@ -318,11 +321,12 @@ impl Mmu {
                 self.high_ram[addr as usize - 0xFF80] = byte;
             }
             // interrupt enable register
-            0xFFFF => self.interrupts_enabled = InterruptFlags::from_byte(byte),
+            0xFFFF => self.interrupts_enabled = InterruptFlags::from(byte),
         }
     }
 
     pub fn write_word(&mut self, addr: u16, word: u16) {
+        // println!("MMU: Write word {:#X}: {:#X}", addr, word);
         let [lo, hi] = word.to_le_bytes();
         self.write_byte(addr, lo);
         self.write_byte(addr + 1, hi);
@@ -339,8 +343,8 @@ struct InterruptFlags {
     vblank: bool,
 }
 
-impl InterruptFlags {
-    fn from_byte(byte: u8) -> Self {
+impl From<u8> for InterruptFlags {
+    fn from(byte: u8) -> Self {
         let [_, _, _, joypad, serial, timer, lcd, vblank] = byte.bits();
         InterruptFlags {
             joypad,
@@ -350,13 +354,20 @@ impl InterruptFlags {
             vblank,
         }
     }
+}
 
-    fn as_byte(self) -> u8 {
-        (self.joypad as u8) << 4
-            | (self.serial as u8) << 3
-            | (self.timer as u8) << 2
-            | (self.lcd as u8) << 1
-            | (self.vblank as u8)
+impl Into<u8> for InterruptFlags {
+    fn into(self) -> u8 {
+        u8::from_bits([
+            false,
+            false,
+            false,
+            self.joypad,
+            self.serial,
+            self.timer,
+            self.lcd,
+            self.vblank,
+        ])
     }
 }
 
@@ -365,7 +376,7 @@ mod tests {
     use super::*;
     #[test]
     fn from_byte() {
-        let flags = InterruptFlags::from_byte(0b00011111);
+        let flags = InterruptFlags::from(0b00011111);
         assert!(flags.joypad);
         assert!(flags.serial);
         assert!(flags.timer);
@@ -373,13 +384,14 @@ mod tests {
         assert!(flags.vblank);
 
         let byte = 0b00011000;
-        let flags = InterruptFlags::from_byte(byte);
+        let flags = InterruptFlags::from(byte);
         assert!(flags.joypad);
         assert!(flags.serial);
         assert_eq!(flags.timer, false);
         assert_eq!(flags.lcd, false);
         assert_eq!(flags.vblank, false);
 
-        assert_eq!(flags.as_byte(), byte);
+        let flags_as_byte: u8 = flags.into();
+        assert_eq!(flags_as_byte, byte);
     }
 }
