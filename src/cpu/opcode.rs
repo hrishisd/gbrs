@@ -1,6 +1,6 @@
 use super::{
     register_file::{Flag, R16, R8},
-    Cpu,
+    Cpu, ImeState,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -951,7 +951,7 @@ impl Cpu {
     /// RETI
     pub fn reti(&mut self) -> u8 {
         self.regs.pc = self.pop_u16();
-        self.interrupts_enabled = true;
+        self.ime = ImeState::Enabled;
         16
     }
 
@@ -1076,12 +1076,12 @@ impl Cpu {
     }
 
     pub fn di(&mut self) -> u8 {
-        self.interrupts_enabled = false;
+        self.ime = ImeState::Disabled;
         4
     }
 
     pub fn ei(&mut self) -> u8 {
-        self.interrupts_enabled = true;
+        self.ime = ImeState::PendingEnable;
         4
     }
 
@@ -1116,8 +1116,49 @@ mod tests {
 
     use crate::cpu::{
         register_file::{Flag, R8},
-        Cpu,
+        Cpu, ImeState,
     };
+
+    #[test]
+    /// EI sets the IME register, but the effect is only visible after the instruction following EI is executed
+    ///
+    /// EI followed by DI, should not set the IME
+    fn test_ime_update() {
+        use ImeState::*;
+        // Program is
+        // EI
+        // NOP
+        // NOP
+        let mut cpu = Cpu::create(&[0xFB, 0x00, 0x00]);
+        assert_eq!(cpu.ime, Disabled);
+        cpu.step();
+        // ime should still be false
+        assert_eq!(cpu.ime, PendingEnable);
+        cpu.step();
+        // IME should be set now:
+        assert_eq!(cpu.ime, Enabled);
+        cpu.step();
+        assert_eq!(cpu.ime, Enabled);
+    }
+
+    #[test]
+    /// EI sets the IME register, but the effect is only visible after the instruction following EI is executed. If the following instruction is DI, IME will remain unset
+    fn ei_di_unset_ime() {
+        use ImeState::*;
+        // Program is
+        // EI
+        // DI
+        // NOP
+        let mut cpu = Cpu::create(&[0xFB, 0xF3, 0x00]);
+        assert_eq!(cpu.ime, Disabled);
+        cpu.step();
+        // ime should be pending
+        assert_eq!(cpu.ime, PendingEnable);
+        cpu.step();
+        assert_eq!(cpu.ime, Disabled);
+        cpu.step();
+        assert_eq!(cpu.ime, Disabled);
+    }
 
     proptest! {
         #[test]

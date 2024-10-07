@@ -11,6 +11,14 @@ use crate::mmu::{InterruptKind, Mmu};
 
 mod opcode;
 mod register_file;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImeState {
+    Enabled,
+    Disabled,
+    PendingEnable,
+}
+
 pub struct Cpu {
     // TODO: remove pub
     pub regs: Registers,
@@ -18,7 +26,7 @@ pub struct Cpu {
     /// AKA, the `IME` flag.
     ///
     /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
-    interrupts_enabled: bool,
+    ime: ImeState,
     dbg_log_file: Option<BufWriter<File>>,
 }
 
@@ -27,7 +35,7 @@ impl Cpu {
         Cpu {
             regs: Registers::create(),
             mmu: Mmu::create(rom),
-            interrupts_enabled: false,
+            ime: ImeState::Disabled,
             dbg_log_file: None,
         }
     }
@@ -48,7 +56,7 @@ impl Cpu {
                 pc: 0x0100,
             },
             mmu: Mmu::create(test_rom),
-            interrupts_enabled: false,
+            ime: ImeState::Disabled,
             dbg_log_file: Some(dbg_log_file),
         }
     }
@@ -58,30 +66,16 @@ impl Cpu {
     /// Returns the number of master clock cycles (at 4 MiHz) that the instruction takes.
     /// E.g. executing the `NOP` instruction will return 4
     pub fn step(&mut self) -> u8 {
-        if let Some(file) = &mut self.dbg_log_file {
-            writeln!(
-                file,
-                "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-                self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3)
-            )
-            .unwrap();
-        }
-
-        let opcode = self.mmu.read_byte(self.regs.pc);
-        println!("  PC: {:#04X}, opcode: {:#02X}", self.regs.pc, opcode);
-        self.regs.pc += 1;
-        let t_cycles = self.execute(opcode);
-        assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
-
-        self.mmu.step(t_cycles);
-
-        if self.interrupts_enabled {
+        // TODO: if interrupt handled, update t_cycles for step
+        // handle interrupts
+        let mut handled_interrupt = false;
+        if self.ime == ImeState::Enabled {
             use InterruptKind::*;
             for interrupt_kind in [Vblank, Lcd, Serial, Timer, Joypad] {
                 if self.mmu.interrupts_requested.get(interrupt_kind)
                     && self.mmu.interrupts_enabled.get(interrupt_kind)
                 {
-                    self.interrupts_enabled = false;
+                    self.ime = ImeState::Disabled;
                     self.mmu.interrupts_requested.set(interrupt_kind, false);
                     self.push_u16(self.regs.pc);
                     self.regs.pc = match interrupt_kind {
@@ -91,12 +85,37 @@ impl Cpu {
                         Lcd => 0x48,
                         Vblank => 0x40,
                     };
-                    self.mmu.step(12);
-                    return t_cycles + 12;
+                    self.mmu.step(20);
+                    handled_interrupt = true;
+                    break;
                 }
             }
         }
-        t_cycles
+
+        // update ime state
+        if self.ime == ImeState::PendingEnable {
+            self.ime = ImeState::Enabled;
+        }
+
+        if let Some(file) = &mut self.dbg_log_file {
+            writeln!(
+            file,
+            "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
+            self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3)
+        )
+        .unwrap();
+        }
+
+        // execute opcode
+        let opcode = self.mmu.read_byte(self.regs.pc);
+        // println!("  PC: {:#04X}, opcode: {:#02X}", self.regs.pc, opcode);
+        self.regs.pc += 1;
+        let t_cycles = self.execute(opcode);
+        assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
+
+        self.mmu.step(t_cycles);
+
+        t_cycles + if handled_interrupt { 20 } else { 0 }
     }
 
     /// Execute a single instruction and return the number of system clock cycles (T-cycles) the instruction takes.

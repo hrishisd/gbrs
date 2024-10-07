@@ -29,19 +29,14 @@ pub struct Mmu {
 impl Mmu {
     pub fn create(rom: &[u8]) -> Self {
         let mut rom_bank_0 = [0; 0x4000];
-        for idx in 0..rom_bank_0.len().min(rom.len()) {
-            rom_bank_0[idx] = rom[idx];
-        }
+        let upto_idx = rom_bank_0.len().min(rom.len());
+        &rom_bank_0[..upto_idx].copy_from_slice(&rom[..upto_idx]);
+
         // TODO: initialize other rom banks
         let mut rom_bank_n = [0; 0x4000];
         if rom.len() > 0x4000 {
-            for idx in 0..rom_bank_n.len() {
-                let rom_idx = idx + 0x4000;
-                if rom_idx > rom.len() {
-                    break;
-                }
-                rom_bank_n[idx] = rom[rom_idx];
-            }
+            let n_bytes = rom_bank_n.len().min(rom.len() - 0x4000);
+            &rom_bank_n[..n_bytes].copy_from_slice(&rom[0x4000..(0x4000 + n_bytes)]);
         }
         Mmu {
             rom_bank_0,
@@ -68,7 +63,7 @@ impl Mmu {
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
-        let res = match addr {
+        match addr {
             // ROM bank 0
             0x0000..=0x3FFF => self.rom_bank_0[addr as usize],
             // ROM bank 01-NN
@@ -155,7 +150,7 @@ impl Mmu {
                 // VRAM DMA
                 0
             }
-            0xF680..=0xFF6B => {
+            0xFF68..=0xFF6B => {
                 // BG / OBJ palettes
                 0
             }
@@ -168,9 +163,7 @@ impl Mmu {
             // interrupt enable register
             0xFFFF => self.interrupts_enabled.into(),
             _ => panic!("Unhandled IO register read for addr: {addr:X}"),
-        };
-        // println!("MMU: Read byte {:#X}: {:#X}", addr, res);
-        res
+        }
     }
 
     pub fn read_word(&self, addr: u16) -> u16 {
@@ -395,17 +388,10 @@ impl From<u8> for InterruptFlags {
     }
 }
 
-impl Into<u8> for InterruptFlags {
-    fn into(self) -> u8 {
+impl From<InterruptFlags> for u8 {
+    fn from(val: InterruptFlags) -> Self {
         u8::from_bits([
-            false,
-            false,
-            false,
-            self.joypad,
-            self.serial,
-            self.timer,
-            self.lcd,
-            self.vblank,
+            false, false, false, val.joypad, val.serial, val.timer, val.lcd, val.vblank,
         ])
     }
 }
