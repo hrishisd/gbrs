@@ -12,11 +12,12 @@ impl TimerFrequency {
     ///
     /// The system clock runs at 4 MiHZ, so we divide the system clock frequency by the timer frequency to get the number of clock cycles per timer tick.
     fn t_cycles_per_tick(self) -> u16 {
+        use TimerFrequency::*;
         match self {
-            TimerFrequency::F4KiHz => 1024,
-            TimerFrequency::F16KiHz => 256,
-            TimerFrequency::F64KiHz => 64,
-            TimerFrequency::F256KiHz => 16,
+            F4KiHz => 1024,
+            F16KiHz => 256,
+            F64KiHz => 64,
+            F256KiHz => 16,
         }
     }
 }
@@ -24,6 +25,8 @@ impl TimerFrequency {
 pub struct Timer {
     pub frequency: TimerFrequency,
     pub enabled: bool,
+    /// Timer modulo.
+    ///
     /// When the timer overflows, it is reset to the value in this register.
     pub tma: u8,
     pub value: u8,

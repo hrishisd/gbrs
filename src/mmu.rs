@@ -1,6 +1,8 @@
 #![allow(unused)]
 
-use crate::ppu::{BgAndWindowTileDataArea, BgColorPalette, ObjSize, Ppu, TileMapArea};
+use crate::ppu::{
+    self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjSize, Ppu, TileMapArea,
+};
 use crate::timer::{Timer, TimerFrequency};
 use crate::util::U8Ext;
 use core::panic;
@@ -30,13 +32,13 @@ impl Mmu {
     pub fn create(rom: &[u8]) -> Self {
         let mut rom_bank_0 = [0; 0x4000];
         let upto_idx = rom_bank_0.len().min(rom.len());
-        &rom_bank_0[..upto_idx].copy_from_slice(&rom[..upto_idx]);
+        rom_bank_0[..upto_idx].copy_from_slice(&rom[..upto_idx]);
 
         // TODO: initialize other rom banks
         let mut rom_bank_n = [0; 0x4000];
         if rom.len() > 0x4000 {
             let n_bytes = rom_bank_n.len().min(rom.len() - 0x4000);
-            &rom_bank_n[..n_bytes].copy_from_slice(&rom[0x4000..(0x4000 + n_bytes)]);
+            rom_bank_n[..n_bytes].copy_from_slice(&rom[0x4000..(0x4000 + n_bytes)]);
         }
         Mmu {
             rom_bank_0,
@@ -88,20 +90,35 @@ impl Mmu {
             // io registers
             0xFF00 => {
                 // joypad input
-                0
+                todo!("implement joypad input")
             }
             0xFF01 | 0xFF02 => 0, // TODO: serial
-            0xFF04..=0xFF07 => {
-                // TODO: timer and divider
-                0
+            0xFF04 => self.divider.value,
+            0xFF05 => self.timer.value,
+            0xFF06 => self.timer.tma,
+            0xFF07 => {
+                let [freq_hi, freq_lo] = {
+                    match self.timer.frequency {
+                        TimerFrequency::F4KiHz => [false, false],
+                        TimerFrequency::F16KiHz => [true, true],
+                        TimerFrequency::F64KiHz => [true, false],
+                        TimerFrequency::F256KiHz => [false, true],
+                    }
+                };
+                u8::from_bits([
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    self.timer.enabled,
+                    freq_hi,
+                    freq_lo,
+                ])
             }
             0xFF0F => self.interrupts_requested.into(),
-            0xFF10..=0xFF26 => {
+            0xFF10..=0xFF3F => {
                 // TODO: audio
-                0
-            }
-            0xFF30..=0xFF3F => {
-                // TODO: wave pattern
                 0
             }
             // LCD control
@@ -117,20 +134,36 @@ impl Mmu {
             ]),
             // LCD status
             0xFF41 => {
-                todo!("LCD status")
+                use ppu::Mode;
+                let (b1, b0) = match self.ppu.mode {
+                    Mode::HorizontalBlank => (false, false),
+                    Mode::VerticalBlank => (false, true),
+                    Mode::ScanlineOAM => (true, false),
+                    Mode::ScanlineVRAM => (true, true),
+                };
+                let stat = self.ppu.lcd_status;
+                u8::from_bits([
+                    true,
+                    stat.lyc_int_select,
+                    stat.mode_2_int_select,
+                    stat.mode_1_int_select,
+                    stat.mode_0_int_select,
+                    stat.lyc_eq_lq,
+                    b1,
+                    b0,
+                ])
             }
             // Background viewport position
             0xFF42 => self.ppu.bg_viewport_offset.y,
             0xFF43 => self.ppu.bg_viewport_offset.x,
-            // TODO: remove hardcoding
-            0xFF44 => 0x90,
-            // 0xFF44 => self.ppu.line,
-            0xFF47 => {
-                todo!("BGP: background palette data");
+            0xFF44 => self.ppu.line,
+            0xFF45 => self.ppu.lyc,
+            0xFF46 => {
+                todo!("OAM DMA source address and start")
             }
-            0xFF48 | 0xFF49 => {
-                todo!("OBJ palette 0,1 data")
-            }
+            0xFF47 => self.ppu.bg_color_palette.into(),
+            0xFF48 => self.ppu.obj_color_palettes[0].into(),
+            0xFF49 => self.ppu.obj_color_palettes[1].into(),
             // Window position
             0xFF4A => {
                 todo!("SCY background viewport y position")
@@ -263,7 +296,15 @@ impl Mmu {
                 }
                 // LCD status
                 0xFF41 => {
-                    todo!("LCD status")
+                    let [_, lyc_int_select, mode_2_int_select, mode_1_int_select, mode_0_int_select, _, _, _] =
+                        byte.bits();
+                    self.ppu.lcd_status = LcdStatus {
+                        lyc_int_select,
+                        mode_2_int_select,
+                        mode_1_int_select,
+                        mode_0_int_select,
+                        ..self.ppu.lcd_status
+                    }
                 }
                 // Background viewport position
                 0xFF42 => {
@@ -275,10 +316,12 @@ impl Mmu {
                 0xFF44 => {
                     panic!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
                 }
-                0xFF47 => self.ppu.bg_color_palette = BgColorPalette::from(byte),
-                0xFF48 | 0xFF49 => {
-                    todo!("OBJ palette 0,1 data")
+                0xFF45 => {
+                    self.ppu.lyc = byte;
                 }
+                0xFF47 => self.ppu.bg_color_palette = ColorPalette::from(byte),
+                0xFF48 => self.ppu.obj_color_palettes[0] = ColorPalette::from(byte),
+                0xFF49 => self.ppu.obj_color_palettes[1] = ColorPalette::from(byte),
                 // Window position
                 0xFF4A => {
                     todo!("SCY background viewport y position")
