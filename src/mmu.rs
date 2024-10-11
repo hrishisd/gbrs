@@ -165,15 +165,13 @@ impl Mmu {
             0xFF48 => self.ppu.obj_color_palettes[0].into(),
             0xFF49 => self.ppu.obj_color_palettes[1].into(),
             // Window position
-            0xFF4A => {
-                todo!("SCY background viewport y position")
-            }
-            0xFF4B => {
-                todo!("SCX background viewport x position")
+            0xFF4A => self.ppu.window_top_left.y,
+            0xFF4B => self.ppu.window_top_left.x,
+            0xFF4D => {
+                todo!("CGB mode only, prepare kspeed switch")
             }
             0xFF4F => {
-                // VRAM bank select
-                0
+                todo!("CGB mode only, VRAM bank select")
             }
             0xFF50 => {
                 // set to non-zero to disable boot ROM
@@ -181,21 +179,19 @@ impl Mmu {
             }
             0xFF51..=0xFF55 => {
                 // VRAM DMA
-                0
+                todo!("CGB mode only, LCD VRAM DMA transfers")
             }
             0xFF68..=0xFF6B => {
-                // BG / OBJ palettes
-                0
+                todo!("CGB only, BG/OBJ Palettes")
             }
             0xFF70 => {
-                // WRAM bank select
-                0
+                todo!("CGB mode only, WRAM Bank select")
             }
             // high ram?
             0xFF80..=0xFFFE => self.high_ram[addr as usize - 0xFF80],
             // interrupt enable register
             0xFFFF => self.interrupts_enabled.into(),
-            _ => panic!("Unhandled IO register read for addr: {addr:X}"),
+            _ => panic!("Unhandled register read for addr: {addr:X}"),
         }
     }
 
@@ -232,131 +228,127 @@ impl Mmu {
             // not usable
             0xFEA0..=0xFEFF => {}
             // io registers
-            0xFF00..=0xFF7F => match addr {
-                0xFF00 => {
-                    // joypad input
-                    todo!()
+            0xFF00 => {
+                // joypad input
+                todo!()
+            }
+            0xFF01 | 0xFF02 => {
+                // serial transfer
+                // This is a noop to pass Blargg's test ROMs
+            }
+            0xFF04 => {
+                self.divider.value = 0;
+            }
+            0xFF05 => {
+                self.timer.value = byte;
+            }
+            0xFF06 => {
+                self.timer.tma = byte;
+            }
+            0xFF07 => {
+                // TAC timer control
+                // byte.as_bits()
+                let [.., enable, clock_select_1, clock_select_0] = byte.bits();
+                let frequency = match [clock_select_1, clock_select_0] {
+                    [false, false] => TimerFrequency::F4KiHz,
+                    [false, true] => TimerFrequency::F16KiHz,
+                    [true, false] => TimerFrequency::F64KiHz,
+                    [true, true] => TimerFrequency::F256KiHz,
+                };
+                self.timer.enabled = enable;
+                self.timer.frequency = frequency;
+            }
+            0xFF0F => {
+                self.interrupts_requested = InterruptFlags::from(byte);
+            }
+            0xFF10..=0xFF26 => {
+                // TODO: implement audio
+            }
+            0xFF30..=0xFF3F => {
+                // wave pattern
+                todo!();
+            }
+            // LCD control
+            0xFF40 => {
+                let [lcd_enable, window_tile_map_bit, window_enable, bg_and_window_tile_data_bit, bg_tile_map_area_bit, obj_size_bit, obj_enable, bg_enable] =
+                    byte.bits();
+                // TODO: assert that lcd only goes from false->true when ppu is in VBlank mode
+                self.ppu.lcd_enabled = lcd_enable;
+                self.ppu.window_tile_map_area = TileMapArea::from_bit(window_tile_map_bit);
+                self.ppu.window_enabled = window_enable;
+                self.ppu.bg_and_window_data_tile_area = if bg_and_window_tile_data_bit {
+                    BgAndWindowTileDataArea::X8000
+                } else {
+                    BgAndWindowTileDataArea::X8800
+                };
+                self.ppu.obj_size = if obj_size_bit {
+                    ObjSize::Dim8x16
+                } else {
+                    ObjSize::Dim8x8
+                };
+                self.ppu.obj_enabled = obj_enable;
+                self.ppu.bg_enabled = bg_enable;
+            }
+            // LCD status
+            0xFF41 => {
+                let [_, lyc_int_select, mode_2_int_select, mode_1_int_select, mode_0_int_select, _, _, _] =
+                    byte.bits();
+                self.ppu.lcd_status = LcdStatus {
+                    lyc_int_select,
+                    mode_2_int_select,
+                    mode_1_int_select,
+                    mode_0_int_select,
+                    ..self.ppu.lcd_status
                 }
-                0xFF01 | 0xFF02 => {
-                    // serial transfer
-                    // This is a noop to pass Blargg's test ROMs
-                }
-                0xFF04 => {
-                    self.divider.value = 0;
-                }
-                0xFF05 => {
-                    self.timer.value = byte;
-                }
-                0xFF06 => {
-                    self.timer.tma = byte;
-                }
-                0xFF07 => {
-                    // TAC timer control
-                    // byte.as_bits()
-                    let [.., enable, clock_select_1, clock_select_0] = byte.bits();
-                    let frequency = match [clock_select_1, clock_select_0] {
-                        [false, false] => TimerFrequency::F4KiHz,
-                        [false, true] => TimerFrequency::F16KiHz,
-                        [true, false] => TimerFrequency::F64KiHz,
-                        [true, true] => TimerFrequency::F256KiHz,
-                    };
-                    self.timer.enabled = enable;
-                    self.timer.frequency = frequency;
-                }
-                0xFF0F => {
-                    self.interrupts_requested = InterruptFlags::from(byte);
-                }
-                0xFF10..=0xFF26 => {
-                    // TODO: implement audio
-                }
-                0xFF30..=0xFF3F => {
-                    // wave pattern
-                    todo!();
-                }
-                // LCD control
-                0xFF40 => {
-                    let [lcd_enable, window_tile_map_bit, window_enable, bg_and_window_tile_data_bit, bg_tile_map_area_bit, obj_size_bit, obj_enable, bg_enable] =
-                        byte.bits();
-                    // TODO: assert that lcd only goes from false->true when ppu is in VBlank mode
-                    self.ppu.lcd_enabled = lcd_enable;
-                    self.ppu.window_tile_map_area = TileMapArea::from_bit(window_tile_map_bit);
-                    self.ppu.window_enabled = window_enable;
-                    self.ppu.bg_and_window_data_tile_area = if bg_and_window_tile_data_bit {
-                        BgAndWindowTileDataArea::X8000
-                    } else {
-                        BgAndWindowTileDataArea::X8800
-                    };
-                    self.ppu.obj_size = if obj_size_bit {
-                        ObjSize::Dim8x16
-                    } else {
-                        ObjSize::Dim8x8
-                    };
-                    self.ppu.obj_enabled = obj_enable;
-                    self.ppu.bg_enabled = bg_enable;
-                }
-                // LCD status
-                0xFF41 => {
-                    let [_, lyc_int_select, mode_2_int_select, mode_1_int_select, mode_0_int_select, _, _, _] =
-                        byte.bits();
-                    self.ppu.lcd_status = LcdStatus {
-                        lyc_int_select,
-                        mode_2_int_select,
-                        mode_1_int_select,
-                        mode_0_int_select,
-                        ..self.ppu.lcd_status
-                    }
-                }
-                // Background viewport position
-                0xFF42 => {
-                    self.ppu.bg_viewport_offset.y = byte;
-                }
-                0xFF43 => {
-                    self.ppu.bg_viewport_offset.x = byte;
-                }
-                0xFF44 => {
-                    panic!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
-                }
-                0xFF45 => {
-                    self.ppu.lyc = byte;
-                }
-                0xFF47 => self.ppu.bg_color_palette = ColorPalette::from(byte),
-                0xFF48 => self.ppu.obj_color_palettes[0] = ColorPalette::from(byte),
-                0xFF49 => self.ppu.obj_color_palettes[1] = ColorPalette::from(byte),
-                // Window position
-                0xFF4A => {
-                    todo!("SCY background viewport y position")
-                }
-                0xFF4B => {
-                    todo!("SCX background viewport x position")
-                }
-                0xFF4F => {
-                    // VRAM bank select
-                    todo!()
-                }
-                0xFF50 => {
-                    // set to non-zero to disable boot ROM
-                    todo!()
-                }
-                0xFF51..=0xFF55 => {
-                    // VRAM DMA
-                    todo!()
-                }
-                0xF680..=0xFF6B => {
-                    // BG / OBJ palettes
-                    todo!();
-                }
-                0xFF70 => {
-                    // WRAM bank select
-                    todo!();
-                }
-                _ => panic!("BUG: unhandled IO register read for addr: {addr:X}"),
-            },
+            }
+            // Background viewport position
+            0xFF42 => {
+                self.ppu.bg_viewport_offset.y = byte;
+            }
+            0xFF43 => {
+                self.ppu.bg_viewport_offset.x = byte;
+            }
+            0xFF44 => {
+                panic!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
+            }
+            0xFF45 => {
+                self.ppu.lyc = byte;
+            }
+            0xFF47 => self.ppu.bg_color_palette = ColorPalette::from(byte),
+            0xFF48 => self.ppu.obj_color_palettes[0] = ColorPalette::from(byte),
+            0xFF49 => self.ppu.obj_color_palettes[1] = ColorPalette::from(byte),
+            // Window position
+            0xFF4A => self.ppu.window_top_left.y = byte,
+            0xFF4B => self.ppu.window_top_left.x = byte,
+            0xFF4D => {
+                todo!("CGB mode only, prepare speed switch")
+            }
+            0xFF4F => {
+                todo!("CGB mode only, VRAM bank select")
+            }
+            0xFF50 => {
+                // set to non-zero to disable boot ROM
+                todo!()
+            }
+            0xFF51..=0xFF55 => {
+                // VRAM DMA
+                todo!()
+            }
+            0xF680..=0xFF6B => {
+                // BG / OBJ palettes
+                todo!();
+            }
+            0xFF70 => {
+                // WRAM bank select
+                todo!();
+            }
             // high ram, used by LDH instructions
             0xFF80..=0xFFFE => {
                 self.high_ram[addr as usize - 0xFF80] = byte;
             }
             // interrupt enable register
             0xFFFF => self.interrupts_enabled = InterruptFlags::from(byte),
+            _ => panic!("BUG: unhandled register write for addr: {addr:X}"),
         }
     }
 
