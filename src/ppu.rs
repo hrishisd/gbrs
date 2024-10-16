@@ -1,8 +1,11 @@
+use core::panic;
+use std::assert_matches::assert_matches;
+
 use crate::util::U8Ext;
 
 #[derive(Debug, Clone)]
 pub struct Ppu {
-    pub vram: [u8; 0x2000],
+    pub vram_tile_data: VRamTileData,
     /// At address 0x9800
     pub lo_tile_map: TileMap,
     /// At address 0x9C00
@@ -21,14 +24,24 @@ pub struct Ppu {
     pub lcd_enabled: bool,
     pub window_tile_map_area: TileMapArea,
     pub window_enabled: bool,
-    pub bg_and_window_data_tile_area: BgAndWindowTileDataArea,
+    pub bg_and_window_tile_data_area: BgAndWindowTileDataArea,
     pub bg_tile_map_area: TileMapArea,
-    /// color idx 0 is always transparent for objs
+    /// color idx 0 is always transparent for objs.
+    ///
+    /// There are 2 color palettes so that the game can use all 4 available colors for objects.
     pub obj_color_palettes: [ColorPalette; 2],
     pub obj_size: ObjSize,
     pub obj_enabled: bool,
     pub bg_enabled: bool,
 
+    /// OAM
+    ///
+    /// This is a sprite attribute table, 40 entries, 4 bytes each.
+    pub obj_attribute_memory: [ObjectAttributes; 40],
+
+    /// BGP
+    ///
+    /// Palette for background and window tiles.
     pub bg_color_palette: ColorPalette,
     /// The on-screen coordinates of the visible 160x144 pixel area within the 256x256 pixel background map.
     ///
@@ -50,7 +63,13 @@ impl Ppu {
     pub(crate) fn new() -> Self {
         // TODO: check that enums are initialized to correct values
         Self {
-            vram: [0; 0x2000],
+            vram_tile_data: VRamTileData {
+                tile_data_blocks: [[Tile {
+                    lines: [TileLine {
+                        color_ids: [ColorId::Id0; 8],
+                    }; 8],
+                }; 128]; 3],
+            },
             lo_tile_map: TileMap {
                 tile_indices: [[0; 32]; 32],
             },
@@ -63,7 +82,7 @@ impl Ppu {
             lcd_enabled: false,
             window_tile_map_area: TileMapArea::from_bit(false),
             window_enabled: false,
-            bg_and_window_data_tile_area: BgAndWindowTileDataArea::from_bit(false),
+            bg_and_window_tile_data_area: BgAndWindowTileDataArea::X8800,
             bg_tile_map_area: TileMapArea::from_bit(false),
             obj_size: ObjSize::from_bit(false),
             obj_enabled: false,
@@ -80,6 +99,62 @@ impl Ppu {
             },
             obj_color_palettes: [ColorPalette::from(0x00); 2],
             window_top_left: Coord { x: 0, y: 0 },
+            obj_attribute_memory: [ObjectAttributes {
+                y_pos: 0,
+                x_pos: 0,
+                tile_idx: 0,
+                priority: Priority::Zero,
+                y_flip: false,
+                x_flip: false,
+                palette: ObjColorPaletteIdx::Zero,
+            }; 40],
+        }
+    }
+
+    pub(crate) fn read_vram_byte(&self, addr: u16) -> u8 {
+        // Tile ID is the middle 2 bytes of the address
+        match addr {
+            // Tiles
+            0x8000..=0x97FF => {
+                let idx = TileByteIdx::from_addr(addr);
+                let tile = self.get_tile_by_addr(idx);
+                println!("Addr: {addr:X}");
+                tile.as_bytes()[idx.byte_idx]
+            } // Tile map
+            0x9800..=0x9FFF => {
+                todo!()
+            }
+            _ => {
+                panic!("Invalid address into VRAM: {addr:#0x}")
+            }
+        }
+    }
+
+    pub(crate) fn write_vram_byte(&mut self, addr: u16, byte: u8) {
+        // Tile ID is the middle 2 bytes of the address
+        match addr {
+            // Tiles
+            0x8000..=0x97FF => {
+                let idx = TileByteIdx::from_addr(addr);
+                let tile = self.get_tile_mut(idx);
+                let line = &mut tile.lines[idx.line_idx];
+                let LineBytes { lsbs, msbs } = line.as_bytes();
+                let (new_lsbs, new_msbs) = match idx.byte_idx % 2 {
+                    0 => (byte, msbs),
+                    1 => (lsbs, byte),
+                    _ => panic!("BUG"),
+                };
+                *line = TileLine::from_bytes(LineBytes {
+                    lsbs: new_lsbs,
+                    msbs: new_msbs,
+                })
+            } // Tile map
+            0x9800..=0x9FFF => {
+                todo!()
+            }
+            _ => {
+                panic!("Invalid address into VRAM: {addr:#0x}")
+            }
         }
     }
 
@@ -129,17 +204,71 @@ impl Ppu {
             }
         }
     }
+
+    fn get_tile_by_addr(&self, idx: TileByteIdx) -> &Tile {
+        let block = &self.vram_tile_data.tile_data_blocks[idx.block_idx];
+        &block[idx.tile_idx]
+    }
+
+    fn get_tile_mut(&mut self, idx: TileByteIdx) -> &mut Tile {
+        let block = &mut self.vram_tile_data.tile_data_blocks[idx.block_idx];
+        &mut block[idx.tile_idx]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TileByteIdx {
+    block_idx: usize,
+    tile_idx: usize,
+    /// The idx of a byte in the 16 byte arrray associated with a Tile
+    byte_idx: usize,
+    /// The idx of a line in the 8 line arrray associated with a Tile
+    line_idx: usize,
+}
+
+impl TileByteIdx {
+    fn from_addr(addr: u16) -> Self {
+        match addr & 0x1FFF {
+            // Tiles
+            0x0000..=0x17FF => {
+                // There are 3 blocks of 128 tiles, where each tile has 16 bytes
+                // 0b..x1 x0 y6..y0 z3..z0
+                // x1x0 used to get block (0b11 is not a valid idx)
+                // y6..y0 used to get tile within block
+                // z3..z0 used to get idx of byte within tile
+                let block_idx = ((addr & 0b1_1000_0000_0000) >> 11) as usize;
+                assert_matches!(
+                    block_idx,
+                    0 | 1 | 2,
+                    "BUG: Invalid tile block ID {block_idx}"
+                );
+                let tile_idx = ((addr & 0x07F0) >> 8) as usize;
+                let byte_idx = (addr & 0x0F) as usize;
+                // Each line consists of 2 bytes
+                let line_idx = byte_idx >> 1;
+                TileByteIdx {
+                    block_idx,
+                    tile_idx,
+                    byte_idx,
+                    line_idx,
+                }
+            }
+            _ => {
+                panic!("Invalid Tile address: {addr:#0x}")
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct LcdStatus {
     ///  If set, selects the LYC == LY condition for the STAT interrupt
     pub lyc_int_select: bool,
-    /// If set, selects teh Mode 2 condition for the STAT interrupt
+    /// If set, selects the Mode 2 condition for the STAT interrupt
     pub mode_2_int_select: bool,
-    /// If set, selects teh Mode 1 condition for the STAT interrupt
+    /// If set, selects the Mode 1 condition for the STAT interrupt
     pub mode_1_int_select: bool,
-    /// If set, selects teh Mode 0 condition for the STAT interrupt
+    /// If set, selects the Mode 0 condition for the STAT interrupt
     pub mode_0_int_select: bool,
     /// (Read-only) Set when LY contains the same value as LYC
     pub lyc_eq_lq: bool,
@@ -152,7 +281,7 @@ pub struct Coord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TileMap {
+pub struct TileMap {
     tile_indices: [[u8; 32]; 32],
 }
 
@@ -186,14 +315,6 @@ pub enum BgAndWindowTileDataArea {
 }
 
 impl BgAndWindowTileDataArea {
-    pub fn from_bit(b: bool) -> Self {
-        if b {
-            BgAndWindowTileDataArea::X8000
-        } else {
-            BgAndWindowTileDataArea::X8800
-        }
-    }
-
     pub fn to_bit(self) -> bool {
         match self {
             BgAndWindowTileDataArea::X8800 => false,
@@ -301,6 +422,7 @@ pub(crate) enum Mode {
     VerticalBlank,
 }
 
+#[derive(Debug, Clone)]
 struct VRamTileData {
     tile_data_blocks: [[Tile; 128]; 3],
 }
@@ -324,6 +446,90 @@ impl VRamTileData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Tile {
+    /// `lines[0]` is the top-line
+    lines: [TileLine; 8],
+}
+
+impl Tile {
+    /// result[0] => 0th row, LSBs
+    /// result[1] => 0th row, MSBs
+    fn as_bytes(&self) -> [u8; 16] {
+        let mut res = [0; 16];
+        for (idx, line) in self.lines.iter().enumerate() {
+            let bytes = line.as_bytes();
+            res[2 * idx] = bytes.lsbs;
+            res[2 * idx + 1] = bytes.msbs;
+        }
+        res
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The byte representation of the 8 colors of a line
+///
+/// The first byte specifies the least significant bit of the color ID of each pixel,
+/// and the second byte specifies the most significant bit
+///
+/// In both bytes, bit 7 represents the left-most pixel and bit 0, the right-most
+struct LineBytes {
+    lsbs: u8,
+    msbs: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TileLine {
+    /// The color_ids of the pixels from left to right  
+    ///
+    /// idx 0 represents the left-most pixel, idx 7 is the right-most pixel
+    color_ids: [ColorId; 8],
+}
+
+impl TileLine {
+    fn as_bytes(&self) -> LineBytes {
+        use ColorId::*;
+        let mut color_id_lsbs = 0;
+        let mut color_id_msbs = 0;
+        // bit 7 of color_id_lsbs is the lsb of the
+        // *left-most* pixel
+        // color_ids[0] is also the color id of the *left-most* pixel
+        for (color_id_idx, color_id) in self.color_ids.iter().enumerate() {
+            let bit_idx = 7 - color_id_idx as u8;
+            match color_id {
+                Id0 => {}
+                Id1 => color_id_lsbs = color_id_lsbs.set(bit_idx),
+                Id2 => color_id_msbs = color_id_msbs.set(bit_idx),
+                Id3 => {
+                    color_id_lsbs = color_id_lsbs.set(bit_idx);
+                    color_id_msbs = color_id_msbs.set(bit_idx);
+                }
+            }
+        }
+        LineBytes {
+            lsbs: color_id_lsbs,
+            msbs: color_id_msbs,
+        }
+    }
+
+    fn from_bytes(bytes: LineBytes) -> TileLine {
+        // color_idx[0] is the left-most pixel
+        // lsbs.bit(7) is the left-most pixel
+        let mut color_ids = [ColorId::Id0; 8];
+        for bit_idx in 0..8 {
+            use ColorId::*;
+            let color_id_idx = 7 - bit_idx as usize;
+            color_ids[color_id_idx] = match (bytes.msbs.bit(bit_idx), bytes.lsbs.bit(bit_idx)) {
+                (false, false) => Id0,
+                (false, true) => Id1,
+                (true, false) => Id2,
+                (true, true) => Id3,
+            }
+        }
+        TileLine { color_ids }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColorId {
     Id0,
     Id1,
@@ -331,20 +537,68 @@ enum ColorId {
     Id3,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TileLine {
-    color_ids: [ColorId; 8],
+#[derive(Debug, Clone, Copy)]
+struct ObjectAttributes {
+    y_pos: u8,
+    x_pos: u8,
+    tile_idx: u8,
+    priority: Priority,
+    y_flip: bool,
+    x_flip: bool,
+    palette: ObjColorPaletteIdx,
 }
 
-impl TileLine {
-    /// For each line, the first byte specifies the least significant bit of the color ID of each pixel, and the second byte specifies the most significant bit.
-    /// In both bytes, bit 7 represents the leftmost pixel, and bit 0 the rightmost. For example, the tile data $3C $7E $42 $42 $42 $42 $42 $42 $7E $5E $7E $0A $7C $56 $38 $7C appears as follows:
-    fn as_bytes(&self) -> (u8, u8) {
-        todo!()
+impl ObjectAttributes {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObjColorPaletteIdx {
+    Zero,
+    One,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Priority {
+    Zero,
+    One,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tile_line_byte_conversion() {
+        use ColorId::*;
+        // MSBS: 0010 0011
+        // LSBS: 0100 1111
+        // Pixel IDS from left to right:
+        // 00, 01, 10, 00, 01, 01, 11, 11
+        let bytes = LineBytes {
+            msbs: 0x23,
+            lsbs: 0x4f,
+        };
+        let line = TileLine::from_bytes(bytes);
+        assert_eq!(line.color_ids, [Id0, Id1, Id2, Id0, Id1, Id1, Id3, Id3]);
+        assert_eq!(line.as_bytes(), bytes);
+        assert_eq!(line, TileLine::from_bytes(line.as_bytes()))
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Tile {
-    lines: [TileLine; 8],
+    #[test]
+    fn read_vram() {
+        let initial_ppu = Ppu::new();
+        assert_eq!(initial_ppu.read_vram_byte(0x8000), 0x00);
+        assert_eq!(initial_ppu.read_vram_byte(0x8800), 0x00);
+        assert_eq!(initial_ppu.read_vram_byte(0x9000), 0x00);
+        for addr in [0x8000, 0x8800, 0x9000] {
+            let mut ppu = initial_ppu.clone();
+            let line_bytes = LineBytes {
+                msbs: 0x23,
+                lsbs: 0x4f,
+            };
+            ppu.write_vram_byte(addr, line_bytes.lsbs);
+            ppu.write_vram_byte(addr + 1, line_bytes.msbs);
+            assert_eq!(ppu.read_vram_byte(addr), line_bytes.lsbs);
+            assert_eq!(ppu.read_vram_byte(addr + 1), line_bytes.msbs);
+        }
+    }
 }

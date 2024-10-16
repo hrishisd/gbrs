@@ -1,6 +1,12 @@
 pub trait U8Ext {
     fn from_bits(bits: [bool; 8]) -> Self;
     fn bits(self) -> [bool; 8];
+    /// `bit(0)` gets lowest order bit (right-most)
+    fn bit(self, idx: u8) -> bool;
+    /// ```
+    /// assert_eq!(0u8.set(0), 1u8))
+    /// ```
+    fn set(self, idx: u8) -> u8;
 }
 
 impl U8Ext for u8 {
@@ -38,6 +44,14 @@ impl U8Ext for u8 {
             .enumerate()
             .fold(0, |acc, (idx, &bit)| acc | ((bit as u8) << (7 - idx)))
     }
+
+    fn bit(self, idx: u8) -> bool {
+        ((self >> idx) & 0b01) > 0
+    }
+
+    fn set(self, idx: u8) -> u8 {
+        self | (1 << idx)
+    }
 }
 
 #[cfg(test)]
@@ -63,6 +77,15 @@ mod tests {
     fn u8_bits_round_trip() {
         for i in 0..=u8::MAX {
             assert_eq!(i, u8::from_bits(i.bits()));
+        }
+    }
+
+    #[test]
+    fn get_bit_by_idx() {
+        assert_eq!(3.bit(0), true);
+        assert_eq!(3.bit(1), true);
+        for i in 2..8 {
+            assert_eq!(3.bit(i), false);
         }
     }
 }

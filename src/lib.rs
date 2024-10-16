@@ -1,3 +1,4 @@
+#![feature(assert_matches)]
 pub mod cpu;
 mod mmu;
 mod ppu;

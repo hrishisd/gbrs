@@ -73,7 +73,7 @@ impl Mmu {
             // VRAM
             0x8000..=0x9FFF => {
                 // TODO: replace this with gpu implementation
-                self.ppu.vram[addr as usize - 0x8000]
+                self.ppu.read_vram_byte(addr)
             }
             // external RAM
             0xA000..=0xBFFF => self.ext_ram[(addr & 0x1FFF) as usize],
@@ -126,7 +126,7 @@ impl Mmu {
                 self.ppu.lcd_enabled,
                 self.ppu.window_tile_map_area.to_bit(),
                 self.ppu.window_enabled,
-                self.ppu.bg_and_window_data_tile_area.to_bit(),
+                self.ppu.bg_and_window_tile_data_area.to_bit(),
                 self.ppu.bg_tile_map_area.to_bit(),
                 self.ppu.obj_size.to_bit(),
                 self.ppu.obj_enabled,
@@ -159,7 +159,7 @@ impl Mmu {
             0xFF44 => self.ppu.line,
             0xFF45 => self.ppu.lyc,
             0xFF46 => {
-                todo!("OAM DMA source address and start")
+                todo!("read OAM DMA source address and start")
             }
             0xFF47 => self.ppu.bg_color_palette.into(),
             0xFF48 => self.ppu.obj_color_palettes[0].into(),
@@ -168,7 +168,7 @@ impl Mmu {
             0xFF4A => self.ppu.window_top_left.y,
             0xFF4B => self.ppu.window_top_left.x,
             0xFF4D => {
-                todo!("CGB mode only, prepare kspeed switch")
+                todo!("CGB mode only, prepare speed switch")
             }
             0xFF4F => {
                 todo!("CGB mode only, VRAM bank select")
@@ -215,7 +215,7 @@ impl Mmu {
             0x4000..=0x7FFF => self.rom_bank_n[(addr & 0x3FFF) as usize] = byte,
             // VRAM
             0x8000..=0x9FFF => {
-                self.ppu.vram[addr as usize - 0x8000] = byte;
+                self.ppu.write_vram_byte(addr, byte);
             }
             // external RAM
             0xA000..=0xBFFF => self.ext_ram[(addr & 0x1FFF) as usize] = byte,
@@ -276,7 +276,7 @@ impl Mmu {
                 self.ppu.lcd_enabled = lcd_enable;
                 self.ppu.window_tile_map_area = TileMapArea::from_bit(window_tile_map_bit);
                 self.ppu.window_enabled = window_enable;
-                self.ppu.bg_and_window_data_tile_area = if bg_and_window_tile_data_bit {
+                self.ppu.bg_and_window_tile_data_area = if bg_and_window_tile_data_bit {
                     BgAndWindowTileDataArea::X8000
                 } else {
                     BgAndWindowTileDataArea::X8800
@@ -313,6 +313,9 @@ impl Mmu {
             }
             0xFF45 => {
                 self.ppu.lyc = byte;
+            }
+            0xFF46 => {
+                todo!("write OAM DMA source address and start")
             }
             0xFF47 => self.ppu.bg_color_palette = ColorPalette::from(byte),
             0xFF48 => self.ppu.obj_color_palettes[0] = ColorPalette::from(byte),
