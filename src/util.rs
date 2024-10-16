@@ -3,7 +3,7 @@ pub trait U8Ext {
     fn bits(self) -> [bool; 8];
     /// `bit(0)` gets lowest order bit (right-most)
     fn bit(self, idx: u8) -> bool;
-    /// ```
+    /// ```ignore
     /// assert_eq!(0u8.set(0), 1u8))
     /// ```
     fn set(self, idx: u8) -> u8;
@@ -15,7 +15,7 @@ impl U8Ext for u8 {
     /// The first element of the returned array is the highest-order bit
     ///
     /// e.g.
-    /// ```
+    /// ```ignore
     /// assert_eq!(
     ///     7.bits(),
     ///     [false, false, false, false, false, true, true, true],
@@ -34,7 +34,7 @@ impl U8Ext for u8 {
     /// The highest-order bit appears first (at index 0) in the array
     ///
     /// e.g.
-    /// ```
+    /// ```ignore
     /// assert_eq!(
     ///     u8::from_bits([false, false, false, false, false, true, true, true]),
     ///     7

@@ -71,10 +71,7 @@ impl Mmu {
             // ROM bank 01-NN
             0x4000..=0x7FFF => self.rom_bank_n[(addr & 0x3FFF) as usize],
             // VRAM
-            0x8000..=0x9FFF => {
-                // TODO: replace this with gpu implementation
-                self.ppu.read_vram_byte(addr)
-            }
+            0x8000..=0x9FFF => self.ppu.read_vram_byte(addr),
             // external RAM
             0xA000..=0xBFFF => self.ext_ram[(addr & 0x1FFF) as usize],
             // work RAM
@@ -337,7 +334,7 @@ impl Mmu {
                 // VRAM DMA
                 todo!()
             }
-            0xF680..=0xFF6B => {
+            0xFF68..=0xFF6B => {
                 // BG / OBJ palettes
                 todo!();
             }

@@ -122,7 +122,14 @@ impl Ppu {
                 tile.as_bytes()[idx.byte_idx]
             } // Tile map
             0x9800..=0x9FFF => {
-                todo!()
+                let tile_map = if (0x9800..=0x9BFF).contains(&addr) {
+                    &self.lo_tile_map
+                } else {
+                    &self.hi_tile_map
+                };
+                let row_idx = ((addr / 32) % 32) as usize;
+                let col_idx = (addr % 32) as usize;
+                tile_map.tile_indices[row_idx][col_idx]
             }
             _ => {
                 panic!("Invalid address into VRAM: {addr:#0x}")
@@ -150,7 +157,14 @@ impl Ppu {
                 })
             } // Tile map
             0x9800..=0x9FFF => {
-                todo!()
+                let tile_map = if (0x9800..=0x9BFF).contains(&addr) {
+                    &mut self.lo_tile_map
+                } else {
+                    &mut self.hi_tile_map
+                };
+                let row_idx = ((addr / 32) % 32) as usize;
+                let col_idx = (addr % 32) as usize;
+                tile_map.tile_indices[row_idx][col_idx] = byte;
             }
             _ => {
                 panic!("Invalid address into VRAM: {addr:#0x}")
@@ -423,7 +437,7 @@ pub(crate) enum Mode {
 }
 
 #[derive(Debug, Clone)]
-struct VRamTileData {
+pub struct VRamTileData {
     tile_data_blocks: [[Tile; 128]; 3],
 }
 
@@ -538,7 +552,7 @@ enum ColorId {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ObjectAttributes {
+pub struct ObjectAttributes {
     y_pos: u8,
     x_pos: u8,
     tile_idx: u8,
@@ -584,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn read_vram() {
+    fn rw_vram_tile_data() {
         let initial_ppu = Ppu::new();
         assert_eq!(initial_ppu.read_vram_byte(0x8000), 0x00);
         assert_eq!(initial_ppu.read_vram_byte(0x8800), 0x00);
@@ -600,5 +614,33 @@ mod tests {
             assert_eq!(ppu.read_vram_byte(addr), line_bytes.lsbs);
             assert_eq!(ppu.read_vram_byte(addr + 1), line_bytes.msbs);
         }
+    }
+
+    #[test]
+    fn rw_vram_tile_maps() {
+        let initial_ppu = Ppu::new();
+        assert_eq!(initial_ppu.read_vram_byte(0x9800), 0x00);
+        assert_eq!(initial_ppu.read_vram_byte(0x9C00), 0x00);
+
+        let byte = 0x4A;
+
+        // Write to lo tile map [0][0]
+        let mut ppu = initial_ppu.clone();
+        ppu.write_vram_byte(0x9800, byte);
+        assert_eq!(ppu.read_vram_byte(0x9800), byte);
+        assert_eq!(ppu.lo_tile_map.tile_indices[0][0], byte);
+
+        // Write to hi tile map [0][0]
+        let mut ppu = initial_ppu.clone();
+        ppu.write_vram_byte(0x9C00, byte);
+        assert_eq!(ppu.read_vram_byte(0x9C00), byte);
+        assert_eq!(ppu.hi_tile_map.tile_indices[0][0], byte);
+
+        // Write to lo tile map [1][3]
+        let addr = 0x9800 + 32 + 3;
+        let mut ppu = initial_ppu.clone();
+        ppu.write_vram_byte(addr, byte);
+        assert_eq!(ppu.read_vram_byte(addr), byte);
+        assert_eq!(ppu.lo_tile_map.tile_indices[1][3], byte);
     }
 }

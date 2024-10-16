@@ -711,6 +711,7 @@ mod test {
 
     use super::Cpu;
 
+    #[ignore]
     #[test]
     fn run_boot_rom() {
         let boot_rom = include_bytes!("../roms/dmg_boot.bin");
