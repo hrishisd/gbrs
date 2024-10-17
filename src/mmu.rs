@@ -1,5 +1,7 @@
 #![allow(unused)]
 
+use enumset::{EnumSet, EnumSetType};
+
 use crate::ppu::{
     self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjSize, Ppu, TileMapArea,
 };
@@ -17,12 +19,11 @@ pub struct Mmu {
     /// A set of flags that indicates whether the interrupt handler for each corresponding piece of hardware may be called.
     ///
     /// also referred to as `IE`
-    pub interrupts_enabled: InterruptFlags,
+    pub interrupts_enabled: EnumSet<InterruptKind>,
     /// A set of flags indicates that an interrupt has been signaled.
     ///
     /// Any set flags only indicate that an interrupt is being *requested*. The actual *execution* of the interrupt handler only happens if both the `IME` register and the corresponding flag in `IE` are set.
-    pub interrupts_requested: InterruptFlags,
-    /// TODO: handle timer interrupts
+    pub interrupts_requested: EnumSet<InterruptKind>,
     timer: Timer,
     /// TODO: reset when executing STOP instruction and only begin ticking once stop mode ends
     divider: Timer,
@@ -47,8 +48,8 @@ impl Mmu {
             work_ram: [0; 0x2000],
             high_ram: [0; 0x80],
             ppu: Ppu::new(),
-            interrupts_enabled: InterruptFlags::from(0x00),
-            interrupts_requested: InterruptFlags::from(0x00),
+            interrupts_enabled: EnumSet::empty(),
+            interrupts_requested: EnumSet::empty(),
             timer: Timer::new(TimerFrequency::F4KiHz),
             divider: Timer::new(TimerFrequency::F16KiHz),
         }
@@ -57,11 +58,12 @@ impl Mmu {
     pub fn step(&mut self, t_cycles: u8) {
         let overflowed = self.timer.update(t_cycles);
         if overflowed {
-            self.interrupts_requested.timer = true;
+            self.interrupts_requested |= InterruptKind::Timer;
         }
-        self.ppu.step(t_cycles);
+        let ppu_interrupts = self.ppu.step(t_cycles);
+        self.interrupts_requested |= ppu_interrupts;
+
         self.divider.update(t_cycles);
-        // TODO: return requested interrupts to CPU?
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
@@ -113,7 +115,7 @@ impl Mmu {
                     freq_lo,
                 ])
             }
-            0xFF0F => self.interrupts_requested.into(),
+            0xFF0F => self.interrupts_requested.as_u8(),
             0xFF10..=0xFF3F => {
                 // TODO: audio
                 0
@@ -187,7 +189,7 @@ impl Mmu {
             // high ram?
             0xFF80..=0xFFFE => self.high_ram[addr as usize - 0xFF80],
             // interrupt enable register
-            0xFFFF => self.interrupts_enabled.into(),
+            0xFFFF => self.interrupts_enabled.as_u8(),
             _ => panic!("Unhandled register read for addr: {addr:X}"),
         }
     }
@@ -255,9 +257,7 @@ impl Mmu {
                 self.timer.enabled = enable;
                 self.timer.frequency = frequency;
             }
-            0xFF0F => {
-                self.interrupts_requested = InterruptFlags::from(byte);
-            }
+            0xFF0F => self.interrupts_requested = EnumSet::<InterruptKind>::from_u8(byte),
             0xFF10..=0xFF26 => {
                 // TODO: implement audio
             }
@@ -347,7 +347,7 @@ impl Mmu {
                 self.high_ram[addr as usize - 0xFF80] = byte;
             }
             // interrupt enable register
-            0xFFFF => self.interrupts_enabled = InterruptFlags::from(byte),
+            0xFFFF => self.interrupts_enabled = EnumSet::<InterruptKind>::from_u8(byte),
             _ => panic!("BUG: unhandled register write for addr: {addr:X}"),
         }
     }
@@ -360,98 +360,31 @@ impl Mmu {
     }
 }
 
-/// Flags for each interrupt handler
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InterruptFlags {
-    joypad: bool,
-    serial: bool,
-    timer: bool,
-    lcd: bool,
-    vblank: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// This type's u8 representation directly corresponds to the interrupt flags' u8 representation in memory.
+#[derive(Debug, EnumSetType)]
+#[enumset(repr = "u8")]
 pub enum InterruptKind {
-    Joypad,
-    Serial,
-    Timer,
-    Lcd,
-    Vblank,
-}
-
-impl InterruptFlags {
-    pub fn get(self, kind: InterruptKind) -> bool {
-        match kind {
-            InterruptKind::Joypad => self.joypad,
-            InterruptKind::Serial => self.serial,
-            InterruptKind::Timer => self.timer,
-            InterruptKind::Lcd => self.lcd,
-            InterruptKind::Vblank => self.vblank,
-        }
-    }
-
-    pub fn set(self, interrupt_kind: InterruptKind, arg: bool) -> Self {
-        match interrupt_kind {
-            InterruptKind::Joypad => Self {
-                joypad: arg,
-                ..self
-            },
-            InterruptKind::Serial => Self {
-                serial: arg,
-                ..self
-            },
-            InterruptKind::Timer => Self { timer: arg, ..self },
-            InterruptKind::Lcd => Self { lcd: arg, ..self },
-            InterruptKind::Vblank => Self {
-                vblank: arg,
-                ..self
-            },
-        }
-    }
-}
-
-impl From<u8> for InterruptFlags {
-    fn from(byte: u8) -> Self {
-        let [_, _, _, joypad, serial, timer, lcd, vblank] = byte.bits();
-        InterruptFlags {
-            joypad,
-            serial,
-            timer,
-            lcd,
-            vblank,
-        }
-    }
-}
-
-impl From<InterruptFlags> for u8 {
-    fn from(val: InterruptFlags) -> Self {
-        u8::from_bits([
-            false, false, false, val.joypad, val.serial, val.timer, val.lcd, val.vblank,
-        ])
-    }
+    Vblank = 0,
+    LcdStat = 1,
+    Timer = 2,
+    Serial = 3,
+    Joypad = 4,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn from_byte() {
-        let flags = InterruptFlags::from(0b00011111);
-        assert!(flags.joypad);
-        assert!(flags.serial);
-        assert!(flags.timer);
-        assert!(flags.lcd);
-        assert!(flags.vblank);
+    fn interrupts_from_byte() {
+        let flags = EnumSet::<InterruptKind>::from_u8_truncated(0b00011111);
+        let all_set = EnumSet::all();
+        assert_eq!(flags, all_set);
 
         let byte = 0b00011000;
-        let flags = InterruptFlags::from(byte);
-        assert!(flags.joypad);
-        assert!(flags.serial);
-        assert_eq!(flags.timer, false);
-        assert_eq!(flags.lcd, false);
-        assert_eq!(flags.vblank, false);
+        let flags = EnumSet::<InterruptKind>::from_u8(byte);
+        assert_eq!(flags, InterruptKind::Joypad | InterruptKind::Serial);
 
-        let flags_as_byte: u8 = flags.into();
-        assert_eq!(flags_as_byte, byte);
+        let flags = EnumSet::<InterruptKind>::from_u8(0);
+        assert_eq!(flags, EnumSet::empty());
     }
 }

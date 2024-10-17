@@ -1,7 +1,9 @@
 use core::panic;
 use std::assert_matches::assert_matches;
 
-use crate::util::U8Ext;
+use enumset::EnumSet;
+
+use crate::{mmu::InterruptKind, util::U8Ext};
 
 #[derive(Debug, Clone)]
 pub struct Ppu {
@@ -172,7 +174,12 @@ impl Ppu {
         }
     }
 
-    pub(crate) fn step(&mut self, t_cycles: u8) {
+    pub(crate) fn step(&mut self, t_cycles: u8) -> EnumSet<InterruptKind> {
+        let mut interrupts = EnumSet::empty();
+        // TODO: if LCD is not enabled, do we still do this?
+        if !self.lcd_enabled {
+            return interrupts;
+        }
         self.cycles_in_mode += t_cycles as u32;
         match self.mode {
             Mode::ScanlineOAM => {
@@ -185,6 +192,9 @@ impl Ppu {
                 if self.cycles_in_mode >= 172 {
                     self.cycles_in_mode -= 172;
                     self.mode = Mode::HorizontalBlank;
+                    if self.lcd_status.mode_0_int_select {
+                        interrupts |= InterruptKind::LcdStat;
+                    }
 
                     // Now GPU has finished drawing the line, write it to the frame buffer
                 }
@@ -196,9 +206,16 @@ impl Ppu {
                     self.line += 1;
                     if self.line == 144 {
                         self.mode = Mode::VerticalBlank;
+                        interrupts |= InterruptKind::Vblank;
+                        if self.lcd_status.mode_1_int_select {
+                            interrupts |= InterruptKind::LcdStat;
+                        }
                     } else {
                         assert!(self.line < 144);
                         self.mode = Mode::ScanlineOAM;
+                        if self.lcd_status.mode_2_int_select {
+                            interrupts |= InterruptKind::LcdStat;
+                        }
                     }
                 }
             }
@@ -217,6 +234,7 @@ impl Ppu {
                 }
             }
         }
+        interrupts
     }
 
     fn get_tile_by_addr(&self, idx: TileByteIdx) -> &Tile {
@@ -278,11 +296,11 @@ impl TileByteIdx {
 pub struct LcdStatus {
     ///  If set, selects the LYC == LY condition for the STAT interrupt
     pub lyc_int_select: bool,
-    /// If set, selects the Mode 2 condition for the STAT interrupt
+    /// If set, selects the Mode 2 (OAM Scan) condition for the STAT interrupt
     pub mode_2_int_select: bool,
-    /// If set, selects the Mode 1 condition for the STAT interrupt
+    /// If set, selects the Mode 1 (VBlank) condition for the STAT interrupt
     pub mode_1_int_select: bool,
-    /// If set, selects the Mode 0 condition for the STAT interrupt
+    /// If set, selects the Mode 0 (HBlank) condition for the STAT interrupt
     pub mode_0_int_select: bool,
     /// (Read-only) Set when LY contains the same value as LYC
     pub lyc_eq_lq: bool,

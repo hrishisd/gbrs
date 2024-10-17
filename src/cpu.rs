@@ -71,18 +71,18 @@ impl Cpu {
         let mut handled_interrupt = false;
         if self.ime == ImeState::Enabled {
             use InterruptKind::*;
-            for interrupt_kind in [Vblank, Lcd, Serial, Timer, Joypad] {
-                if self.mmu.interrupts_requested.get(interrupt_kind)
-                    && self.mmu.interrupts_enabled.get(interrupt_kind)
+            for interrupt_kind in [Vblank, LcdStat, Serial, Timer, Joypad] {
+                if self.mmu.interrupts_requested.contains(interrupt_kind)
+                    && self.mmu.interrupts_enabled.contains(interrupt_kind)
                 {
                     self.ime = ImeState::Disabled;
-                    self.mmu.interrupts_requested.set(interrupt_kind, false);
+                    self.mmu.interrupts_requested.remove(interrupt_kind);
                     self.push_u16(self.regs.pc);
                     self.regs.pc = match interrupt_kind {
                         Joypad => 0x60,
                         Serial => 0x58,
                         Timer => 0x50,
-                        Lcd => 0x48,
+                        LcdStat => 0x48,
                         Vblank => 0x40,
                     };
                     self.mmu.step(20);
