@@ -176,7 +176,7 @@ impl Ppu {
 
     pub(crate) fn step(&mut self, t_cycles: u8) -> EnumSet<InterruptKind> {
         let mut interrupts = EnumSet::empty();
-        // TODO: if LCD is not enabled, do we still do this?
+        // TODO: if LCD is not enabled, do we still render?
         if !self.lcd_enabled {
             return interrupts;
         }
@@ -569,27 +569,49 @@ enum ColorId {
     Id3,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ObjectAttributes {
-    y_pos: u8,
-    x_pos: u8,
-    tile_idx: u8,
-    priority: Priority,
-    y_flip: bool,
-    x_flip: bool,
-    palette: ObjColorPaletteIdx,
+    pub y_pos: u8,
+    pub x_pos: u8,
+    pub tile_idx: u8,
+
+    // -- attributes/flags --
+    pub priority: Priority,
+    pub y_flip: bool,
+    pub x_flip: bool,
+    pub palette: ObjColorPaletteIdx,
 }
 
-impl ObjectAttributes {}
+impl ObjectAttributes {
+    pub fn as_bytes(&self) -> [u8; 4] {
+        let byte_3 = u8::from_bits([
+            match self.priority {
+                Priority::Zero => false,
+                Priority::One => true,
+            },
+            self.y_flip,
+            self.x_flip,
+            match self.palette {
+                ObjColorPaletteIdx::Zero => false,
+                ObjColorPaletteIdx::One => true,
+            },
+            false,
+            false,
+            false,
+            false,
+        ]);
+        [self.y_pos, self.x_pos, self.tile_idx, byte_3]
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ObjColorPaletteIdx {
+pub enum ObjColorPaletteIdx {
     Zero,
     One,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Priority {
+pub enum Priority {
     Zero,
     One,
 }

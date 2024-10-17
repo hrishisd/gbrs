@@ -3,7 +3,8 @@
 use enumset::{EnumSet, EnumSetType};
 
 use crate::ppu::{
-    self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjSize, Ppu, TileMapArea,
+    self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjColorPaletteIdx, ObjSize,
+    ObjectAttributes, Ppu, Priority, TileMapArea,
 };
 use crate::timer::{Timer, TimerFrequency};
 use crate::util::U8Ext;
@@ -81,7 +82,17 @@ impl Mmu {
             // echo RAM
             0xE000..=0xFDFF => self.work_ram[(addr & 0x1FFF) as usize],
             // object attribute memory
-            0xFE00..=0xFE9F => 6,
+            0xFE00..=0xFE9F => {
+                // The obj entry is 4 bytes
+                let object_entry_idx = (addr - 0xFE00) >> 2;
+                assert!(
+                    (0..40).contains(&object_entry_idx),
+                    "invalid obj entry idx: {object_entry_idx} calculated from address {addr}"
+                );
+                let object_attributes = self.ppu.obj_attribute_memory[object_entry_idx as usize];
+                let byte_offset = addr % 4;
+                object_attributes.as_bytes()[byte_offset as usize]
+            }
             // not usable
             0xFEA0..=0xFEFF => {
                 panic!("Program accessed invalid memory: {addr:X}")
@@ -223,7 +234,36 @@ impl Mmu {
             // echo RAM
             0xE000..=0xFDFF => self.work_ram[(addr & 0x1FFF) as usize] = byte,
             // object attribute memory
-            0xFE00..=0xFE9F => {}
+            0xFE00..=0xFE9F => {
+                // The obj entry is 4 bytes
+                let object_entry_idx = (addr - 0xFE00) >> 2;
+                assert!(
+                    (0..40).contains(&object_entry_idx),
+                    "invalid obj entry idx: {object_entry_idx} calculated from address {addr}"
+                );
+                let obj = &mut self.ppu.obj_attribute_memory[object_entry_idx as usize];
+                let byte_offset = addr % 4;
+                match byte_offset {
+                    0 => obj.y_pos = byte,
+                    1 => obj.x_pos = byte,
+                    2 => obj.tile_idx = byte,
+                    3 => {
+                        // WARNING: This strategy throws away the parts of the byte that are used in CGB mode
+                        let [priority, y_flip, x_flip, dmg_palette, _, _, _, _] = byte.bits();
+                        obj.y_flip = y_flip;
+                        obj.x_flip = x_flip;
+                        obj.priority = match priority {
+                            true => Priority::One,
+                            false => Priority::Zero,
+                        };
+                        obj.palette = match dmg_palette {
+                            true => ObjColorPaletteIdx::One,
+                            false => ObjColorPaletteIdx::Zero,
+                        };
+                    }
+                    _ => panic!("BUG"),
+                }
+            }
             // not usable
             0xFEA0..=0xFEFF => {}
             // io registers
@@ -386,5 +426,41 @@ mod tests {
 
         let flags = EnumSet::<InterruptKind>::from_u8(0);
         assert_eq!(flags, EnumSet::empty());
+    }
+
+    #[test]
+    fn oam_memory_rw() {
+        let empty_arr = [];
+        let mut mmu = Mmu::create(&empty_arr);
+        for addr in 0xFE00..=0xFe9F {
+            assert_eq!(mmu.read_byte(addr), 0);
+        }
+        let obj_addr = 0xFE04;
+        let y_pos = 5;
+        let x_pos = 10;
+        let tile_idx = 20;
+        let attributes = 0b1010_0000;
+        mmu.write_byte(obj_addr, y_pos);
+        mmu.write_byte(obj_addr + 1, x_pos);
+        mmu.write_byte(obj_addr + 2, tile_idx);
+        mmu.write_byte(obj_addr + 3, attributes);
+
+        assert_eq!(
+            mmu.ppu.obj_attribute_memory[1],
+            ObjectAttributes {
+                y_pos,
+                x_pos,
+                tile_idx,
+                priority: Priority::One,
+                y_flip: false,
+                x_flip: true,
+                palette: ObjColorPaletteIdx::Zero
+            }
+        );
+
+        assert_eq!(mmu.read_byte(obj_addr), y_pos);
+        assert_eq!(mmu.read_byte(obj_addr + 1), x_pos);
+        assert_eq!(mmu.read_byte(obj_addr + 2), tile_idx);
+        assert_eq!(mmu.read_byte(obj_addr + 3), attributes);
     }
 }
