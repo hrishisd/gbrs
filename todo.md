@@ -1,8 +1,9 @@
 ## basic functionality
 
 - [x] implement OAM 
+- [x] implement OAM DMA transfer
+- [ ] support rom banking
 - [ ] implement rendering
-- [ ] implement OAM DMA
 - [ ] implement support for 2-tile objects
 - [ ] double check interrupt handling
 - [ ] implement the HALT instruction

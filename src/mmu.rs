@@ -158,7 +158,7 @@ impl Mmu {
                     stat.mode_2_int_select,
                     stat.mode_1_int_select,
                     stat.mode_0_int_select,
-                    stat.lyc_eq_lq,
+                    self.ppu.line == self.ppu.lyc,
                     b1,
                     b0,
                 ])
@@ -169,7 +169,7 @@ impl Mmu {
             0xFF44 => self.ppu.line,
             0xFF45 => self.ppu.lyc,
             0xFF46 => {
-                todo!("read OAM DMA source address and start")
+                panic!("Attempted to read from DMA transfer register")
             }
             0xFF47 => self.ppu.bg_color_palette.into(),
             0xFF48 => self.ppu.obj_color_palettes[0].into(),
@@ -352,7 +352,14 @@ impl Mmu {
                 self.ppu.lyc = byte;
             }
             0xFF46 => {
-                todo!("write OAM DMA source address and start")
+                // Perform DMA transfer.
+                // DMA on the real system takes 160 µs to complete.
+                // This implementation doesn't simulate the DMA timing.
+                let source_addr = (byte as u16) << 8;
+                let dest_addr = 0xFE00;
+                for offset in 0..0xA0 {
+                    self.write_byte(dest_addr + offset, self.read_byte(source_addr + offset));
+                }
             }
             0xFF47 => self.ppu.bg_color_palette = ColorPalette::from(byte),
             0xFF48 => self.ppu.obj_color_palettes[0] = ColorPalette::from(byte),

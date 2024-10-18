@@ -97,7 +97,6 @@ impl Ppu {
                 mode_2_int_select: false,
                 mode_1_int_select: false,
                 mode_0_int_select: false,
-                lyc_eq_lq: false,
             },
             obj_color_palettes: [ColorPalette::from(0x00); 2],
             window_top_left: Coord { x: 0, y: 0 },
@@ -197,6 +196,7 @@ impl Ppu {
                     }
 
                     // Now GPU has finished drawing the line, write it to the frame buffer
+                    // TODO: render line here
                 }
             }
             Mode::HorizontalBlank => {
@@ -302,8 +302,6 @@ pub struct LcdStatus {
     pub mode_1_int_select: bool,
     /// If set, selects the Mode 0 (HBlank) condition for the STAT interrupt
     pub mode_0_int_select: bool,
-    /// (Read-only) Set when LY contains the same value as LYC
-    pub lyc_eq_lq: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,7 +442,7 @@ impl From<u8> for ColorPalette {
 pub(crate) enum Mode {
     /// Takes 80 clock cycles. While in this mode, the PPU fetches assets from memory
     ScanlineOAM,
-    /// Takes 172 to 289 clock cycles depending on the amount of assets being rendered
+    /// Takes 172 to 289 clock cycles depending on the volume of assets being rendered
     ScanlineVRAM,
     /// Can take between 87 to 204 cycles, depending on how long mode `ScanlineVRAM` took.
     HorizontalBlank,

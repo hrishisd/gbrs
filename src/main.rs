@@ -109,6 +109,23 @@ const FPS: u32 = 60;
 const CYCLES_PER_FRAME: u32 = CYCLES_PER_SECOND / FPS;
 
 fn main() {
+    //
+    // void Emulator::Update( )
+    // {
+    //     const int MAXCYCLES = 69905 ;
+    //     int cyclesThisUpdate = 0 ;
+
+    //     while (cyclesThisUpdate < MAXCYCLES)
+    //     {
+    //        int cycles = ExecuteNextOpcode( ) ;
+    //        cyclesThisUpdate+=cycles ;
+    //        UpdateTimers(cycles) ;
+    //        UpdateGraphics(cycles) ;
+    //        DoInterupts( ) ;
+    //     }
+    //   RenderScreen( ) ;
+    //   }
+
     // experiment();
     // test_rendering();
     let mut cpu = crate::cpu::Cpu::create(&[]);
