@@ -118,8 +118,11 @@ impl Ppu {
             // Tiles
             0x8000..=0x97FF => {
                 let idx = TileByteIdx::from_addr(addr);
-                let tile = self.get_tile_by_addr(idx);
-                println!("Addr: {addr:X}");
+                let tile = {
+                    let this = &self;
+                    let block = &this.vram_tile_data.tile_data_blocks[idx.block_idx];
+                    &block[idx.tile_idx]
+                };
                 tile.as_bytes()[idx.byte_idx]
             } // Tile map
             0x9800..=0x9FFF => {
@@ -144,7 +147,11 @@ impl Ppu {
             // Tiles
             0x8000..=0x97FF => {
                 let idx = TileByteIdx::from_addr(addr);
-                let tile = self.get_tile_mut(idx);
+                let tile = {
+                    let this = &mut *self;
+                    let block = &mut this.vram_tile_data.tile_data_blocks[idx.block_idx];
+                    &mut block[idx.tile_idx]
+                };
                 let line = &mut tile.lines[idx.line_idx];
                 let LineBytes { lsbs, msbs } = line.as_bytes();
                 let (new_lsbs, new_msbs) = match idx.byte_idx % 2 {
@@ -204,6 +211,9 @@ impl Ppu {
                 if self.cycles_in_mode >= 204 {
                     self.cycles_in_mode -= 204;
                     self.line += 1;
+                    if self.should_trigger_lyc_interrupt() {
+                        interrupts |= InterruptKind::LcdStat;
+                    }
                     if self.line == 144 {
                         self.mode = Mode::VerticalBlank;
                         interrupts |= InterruptKind::Vblank;
@@ -231,20 +241,18 @@ impl Ppu {
                         self.line = 0;
                         self.mode = Mode::ScanlineOAM;
                     }
+                    if self.should_trigger_lyc_interrupt() {
+                        interrupts |= InterruptKind::LcdStat;
+                    }
                 }
             }
         }
         interrupts
     }
 
-    fn get_tile_by_addr(&self, idx: TileByteIdx) -> &Tile {
-        let block = &self.vram_tile_data.tile_data_blocks[idx.block_idx];
-        &block[idx.tile_idx]
-    }
-
-    fn get_tile_mut(&mut self, idx: TileByteIdx) -> &mut Tile {
-        let block = &mut self.vram_tile_data.tile_data_blocks[idx.block_idx];
-        &mut block[idx.tile_idx]
+    /// This condition should be checked every time the current line is updated.
+    fn should_trigger_lyc_interrupt(&self) -> bool {
+        self.lcd_status.lyc_int_select && self.lyc == self.line
     }
 }
 
