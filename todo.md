@@ -3,9 +3,13 @@
 - [x] implement OAM 
 - [x] implement OAM DMA transfer
 - [x] implement lyc compare interrupt
-- [ ] implement rendering
-- [ ] support rom banking
+- [x] implement rendering background
+- [ ] implement rendering objects
 - [ ] implement support for 2-tile objects
+- [ ] implement rendering window
+- [ ] implement sdl2 frontend (testing)
+- [ ] implement terminal frontend
+- [ ] support rom banking
 - [ ] double check interrupt handling
 - [ ] implement the HALT instruction
 - [ ] implement the STOP instruction properly

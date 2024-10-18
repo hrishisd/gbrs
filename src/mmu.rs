@@ -134,10 +134,10 @@ impl Mmu {
             // LCD control
             0xFF40 => u8::from_bits([
                 self.ppu.lcd_enabled,
-                self.ppu.window_tile_map_area.to_bit(),
+                self.ppu.window_tile_map_select.to_bit(),
                 self.ppu.window_enabled,
-                self.ppu.bg_and_window_tile_data_area.to_bit(),
-                self.ppu.bg_tile_map_area.to_bit(),
+                self.ppu.bg_and_window_tile_data_select.to_bit(),
+                self.ppu.bg_tile_map_select.to_bit(),
                 self.ppu.obj_size.to_bit(),
                 self.ppu.obj_enabled,
                 self.ppu.bg_enabled,
@@ -311,9 +311,9 @@ impl Mmu {
                     byte.bits();
                 // TODO: assert that lcd only goes from false->true when ppu is in VBlank mode
                 self.ppu.lcd_enabled = lcd_enable;
-                self.ppu.window_tile_map_area = TileMapArea::from_bit(window_tile_map_bit);
+                self.ppu.window_tile_map_select = TileMapArea::from_bit(window_tile_map_bit);
                 self.ppu.window_enabled = window_enable;
-                self.ppu.bg_and_window_tile_data_area = if bg_and_window_tile_data_bit {
+                self.ppu.bg_and_window_tile_data_select = if bg_and_window_tile_data_bit {
                     BgAndWindowTileDataArea::X8000
                 } else {
                     BgAndWindowTileDataArea::X8800
@@ -352,7 +352,8 @@ impl Mmu {
                 self.ppu.lyc = byte;
             }
             0xFF46 => {
-                // Perform DMA transfer.
+                // TODO: This would be more performant if we write directly to the oam attributes array in the PPU
+                // Perform OAM DMA transfer.
                 // DMA on the real system takes 160 µs to complete.
                 // This implementation doesn't simulate the DMA timing.
                 let source_addr = (byte as u16) << 8;

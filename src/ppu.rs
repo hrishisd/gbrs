@@ -7,6 +7,7 @@ use crate::{mmu::InterruptKind, util::U8Ext};
 
 #[derive(Debug, Clone)]
 pub struct Ppu {
+    pub lcd_display: [[Color; 160]; 144],
     pub vram_tile_data: VRamTileData,
     /// At address 0x9800
     pub lo_tile_map: TileMap,
@@ -24,16 +25,19 @@ pub struct Ppu {
 
     // -- LCD Control flags
     pub lcd_enabled: bool,
-    pub window_tile_map_area: TileMapArea,
+    pub window_tile_map_select: TileMapArea,
+    // Draw the window only when this bit is set
     pub window_enabled: bool,
-    pub bg_and_window_tile_data_area: BgAndWindowTileDataArea,
-    pub bg_tile_map_area: TileMapArea,
+    pub bg_and_window_tile_data_select: BgAndWindowTileDataArea,
+    pub bg_tile_map_select: TileMapArea,
     /// color idx 0 is always transparent for objs.
     ///
     /// There are 2 color palettes so that the game can use all 4 available colors for objects.
     pub obj_color_palettes: [ColorPalette; 2],
     pub obj_size: ObjSize,
+    /// Draw objects only when this bit is set
     pub obj_enabled: bool,
+    // Draw the background only when this bit is set
     pub bg_enabled: bool,
 
     /// OAM
@@ -47,11 +51,13 @@ pub struct Ppu {
     pub bg_color_palette: ColorPalette,
     /// The on-screen coordinates of the visible 160x144 pixel area within the 256x256 pixel background map.
     ///
-    /// AKA SCY and SCX
+    /// AKA SCY (ScrollY) and SCX (ScrollX)
     pub bg_viewport_offset: Coord,
 
     /// The on-screen coordinates of the window's top-left pixel (WY and WX)
     ///
+    /// The x position of this coordinate is the actual x position of the window on the background - 7
+    /// So if you want to draw the window in the upper left corner (0,0), this coordinate would be (0,7)
     /// The window is visible, if enabled, when x is in \[0,166\] and y is in \[0, 143\]
     pub window_top_left: Coord,
 
@@ -82,10 +88,10 @@ impl Ppu {
             cycles_in_mode: 0,
             mode: Mode::ScanlineOAM,
             lcd_enabled: false,
-            window_tile_map_area: TileMapArea::from_bit(false),
+            window_tile_map_select: TileMapArea::from_bit(false),
             window_enabled: false,
-            bg_and_window_tile_data_area: BgAndWindowTileDataArea::X8800,
-            bg_tile_map_area: TileMapArea::from_bit(false),
+            bg_and_window_tile_data_select: BgAndWindowTileDataArea::X8800,
+            bg_tile_map_select: TileMapArea::from_bit(false),
             obj_size: ObjSize::from_bit(false),
             obj_enabled: false,
             bg_enabled: false,
@@ -109,6 +115,7 @@ impl Ppu {
                 x_flip: false,
                 palette: ObjColorPaletteIdx::Zero,
             }; 40],
+            lcd_display: [[Color::Black; 160]; 144],
         }
     }
 
@@ -182,7 +189,6 @@ impl Ppu {
 
     pub(crate) fn step(&mut self, t_cycles: u8) -> EnumSet<InterruptKind> {
         let mut interrupts = EnumSet::empty();
-        // TODO: if LCD is not enabled, do we still render?
         if !self.lcd_enabled {
             return interrupts;
         }
@@ -202,8 +208,10 @@ impl Ppu {
                         interrupts |= InterruptKind::LcdStat;
                     }
 
-                    // Now GPU has finished drawing the line, write it to the frame buffer
-                    // TODO: render line here
+                    // Now GPU has finished drawing the line, write it to the LCD
+                    if self.line < 144 {
+                        self.lcd_display[self.line as usize] = self.draw_scan_line();
+                    }
                 }
             }
             Mode::HorizontalBlank => {
@@ -248,6 +256,88 @@ impl Ppu {
             }
         }
         interrupts
+    }
+
+    /// Resolve pixel values for a line of the LCD display
+    fn draw_scan_line(&self) -> [Color; 160] {
+        let mut lcd_line = [Color::Black; 160];
+        if self.bg_enabled {
+            let tile_map = match self.bg_tile_map_select {
+                TileMapArea::X9800 => &self.lo_tile_map,
+                TileMapArea::X9C00 => &self.hi_tile_map,
+            };
+            // The index of the line being rendered, in reference to the entire 256x256 background
+            let bg_y_pos = self.bg_viewport_offset.y.wrapping_add(self.line);
+            for lcd_x_pos in 0u8..160 {
+                let bg_x_pos = self.bg_viewport_offset.x.wrapping_add(lcd_x_pos);
+
+                // we are resolving the value of the pixel on the lcd at (lcd_x_pos, self.line)
+                // This is equivalent to resolving the value of the pixel on the background at (bg_x_pos, bg_y_pos)
+                let tile_idx = tile_map.tile_indices[bg_y_pos as usize / 8][bg_x_pos as usize / 8];
+                let tile = match self.bg_and_window_tile_data_select {
+                    BgAndWindowTileDataArea::X8000 => {
+                        self.vram_tile_data.get_tile_from_0x8000(tile_idx)
+                    }
+                    BgAndWindowTileDataArea::X8800 => {
+                        self.vram_tile_data.get_tile_from_0x8800_signed(tile_idx)
+                    }
+                };
+
+                let tile_line_idx = bg_y_pos % 8;
+                let tile_col_idx = bg_x_pos % 8;
+                let color_id = tile.lines[tile_line_idx as usize].color_ids[tile_col_idx as usize];
+                let color = self.bg_color_palette.lookup(color_id);
+                lcd_line[lcd_x_pos as usize] = color;
+            }
+        }
+        if self.obj_enabled {
+            let obj_height = match self.obj_size {
+                ObjSize::Dim8x8 => 8,
+                ObjSize::Dim8x16 => 16,
+            };
+            for obj in self.obj_attribute_memory {
+                // TODO: implement priority
+                // range of lcd lines that the object occupies
+                // The position of the object on the lcd's coordinate system
+                let obj_lcd_y_pos = obj.y_pos as i16 - 16;
+                let obj_lcd_x_pos = obj.y_pos as i16 - 8;
+                let obj_lcd_lines = (obj_lcd_y_pos)..(obj_lcd_y_pos + obj_height);
+                let obj_visible_on_line = obj_lcd_lines.contains(&(self.line as i16));
+                if !obj_visible_on_line {
+                    continue;
+                }
+                // render the object (only single-tile object)
+                let tile = self.vram_tile_data.get_tile_from_0x8000(obj.tile_idx);
+                // while line of the tile is on this lcd line?
+                assert!(self.line as i16 >= obj_lcd_y_pos);
+                let line_idx = if obj.y_flip {
+                    8 - (self.line as i16 - obj_lcd_y_pos)
+                } else {
+                    self.line as i16 - obj_lcd_y_pos
+                };
+                let tile_line = tile.lines[line_idx as usize];
+                // start rendering the tile from what idx?
+                let color_ids = if obj.x_flip {
+                    let mut clone = tile_line.color_ids.clone();
+                    clone.reverse();
+                    clone
+                } else {
+                    tile_line.color_ids
+                };
+                for (pixel_color_idx, pixel_color_id) in color_ids.iter().enumerate() {
+                    // the index of this pixel in the lcd line
+                    let lcd_line_idx = obj_lcd_x_pos + pixel_color_idx as i16;
+                    let is_transparent = *pixel_color_id == ColorId::Id0;
+                    // let is_above_background = obj.priority == Priority::Zero || lcd_line[];
+                    // should we render this pixel?
+                    // lcd_line_idx >= 0
+                    // lcd_line_idx < 160
+                    // priority?
+                }
+            }
+        }
+        if self.window_enabled {}
+        lcd_line
     }
 
     /// This condition should be checked every time the current line is updated.
@@ -385,7 +475,7 @@ impl ObjSize {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Color {
+pub enum Color {
     White,
     LightGray,
     DarkGray,
@@ -421,6 +511,17 @@ impl Color {
 /// field i of the strict corresponds to the ith color id
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColorPalette(Color, Color, Color, Color);
+
+impl ColorPalette {
+    fn lookup(&self, id: ColorId) -> Color {
+        match id {
+            ColorId::Id0 => self.0,
+            ColorId::Id1 => self.1,
+            ColorId::Id2 => self.2,
+            ColorId::Id3 => self.3,
+        }
+    }
+}
 
 impl From<ColorPalette> for u8 {
     fn from(value: ColorPalette) -> Self {
@@ -468,18 +569,29 @@ pub struct VRamTileData {
 impl VRamTileData {
     /// Read a tile from blocks 0 or 1, using unsigned addressing.
     ///
-    /// idx 0-127 gets from block 0
+    /// idx 0 to 127 gets from block 0
     ///
-    /// idx 128-255 gets from block 1
+    /// idx 128 to 255 gets from block 1
     fn get_tile_from_0x8000(&self, idx: u8) -> Tile {
-        todo!()
+        if idx < 128 {
+            self.tile_data_blocks[0][idx as usize]
+        } else {
+            self.tile_data_blocks[1][idx as usize % 128]
+        }
     }
 
     /// Read a tile from blocks 1 or 2 using signed addressing
     ///
-    /// idx 0-127 searches within block 2
-    fn get_tile_from_0x8800_signed(&self, idx: i8) -> Tile {
-        todo!()
+    /// idx 0 to 127 searches within block 2
+    ///
+    /// idx -1 to -128 searches within block 1
+    fn get_tile_from_0x8800_signed(&self, idx: u8) -> Tile {
+        let idx = idx as i8;
+        if idx >= 0 {
+            self.tile_data_blocks[2][idx as usize]
+        } else {
+            self.tile_data_blocks[1][(idx as i16 + 128) as usize]
+        }
     }
 }
 
@@ -577,7 +689,17 @@ enum ColorId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ObjectAttributes {
+    /// Object’s vertical position on the screen + 16.
+    ///
+    /// E.g:
+    ///
+    /// Y=0 hides an object
+    ///
+    /// Y=2 hides an 8×8 object but displays the last two rows of an 8×16 object.
     pub y_pos: u8,
+    /// Object’s horizontal position on the screen + 8.
+    ///
+    /// An off-screen value (X=0 or X>=168) hides the object.
     pub x_pos: u8,
     pub tile_idx: u8,
 
@@ -688,5 +810,94 @@ mod tests {
         ppu.write_vram_byte(addr, byte);
         assert_eq!(ppu.read_vram_byte(addr), byte);
         assert_eq!(ppu.lo_tile_map.tile_indices[1][3], byte);
+    }
+
+    fn mono_color_tile(color_id: ColorId) -> Tile {
+        Tile {
+            lines: [TileLine {
+                color_ids: [color_id; 8],
+            }; 8],
+        }
+    }
+
+    #[test]
+    fn draw_bg_only() {
+        let mut ppu = Ppu::new();
+
+        ppu.bg_enabled = true;
+        ppu.window_enabled = false;
+        ppu.obj_enabled = false;
+        ppu.bg_viewport_offset = Coord { x: 0, y: 0 };
+        ppu.line = 0;
+        ppu.bg_and_window_tile_data_select = BgAndWindowTileDataArea::X8000;
+        ppu.bg_tile_map_select = TileMapArea::X9800;
+        // Create 4 tiles in VRAM in block 0 with different color IDs
+        ppu.vram_tile_data.tile_data_blocks[0][0] = mono_color_tile(ColorId::Id0);
+        ppu.vram_tile_data.tile_data_blocks[0][1] = mono_color_tile(ColorId::Id1);
+        ppu.vram_tile_data.tile_data_blocks[0][2] = mono_color_tile(ColorId::Id2);
+        ppu.vram_tile_data.tile_data_blocks[0][3] = mono_color_tile(ColorId::Id3);
+        ppu.bg_color_palette = ColorPalette(
+            Color::White,     // Tile 0
+            Color::LightGray, // Tile 1
+            Color::DarkGray,  // Tile 2
+            Color::Black,     // Tile 3
+        );
+
+        // fill the first two rows of the background map
+        // The first row is a white tile followed by 31 light gray tiles
+        ppu.lo_tile_map.tile_indices[0][1] = 0;
+        ppu.lo_tile_map.tile_indices[0][1..].fill(1);
+
+        // The first row of the LCD should be 8 white pixels followed by 152 light gray pixels
+        let lcd_row = ppu.draw_scan_line();
+        assert_eq!(lcd_row[..8], [Color::White; 8]);
+        assert_eq!(lcd_row[8..], [Color::LightGray; 152]);
+
+        // move the viewport to the right by 1 pixel
+        ppu.bg_viewport_offset.x = 1;
+        // Now the first row of the LCD should be 7 white pixels followed by 152 light gray pixels
+        let lcd_row = ppu.draw_scan_line();
+        assert_eq!(lcd_row[..7], [Color::White; 7]);
+        assert_eq!(lcd_row[7..], [Color::LightGray; 153]);
+
+        // we should get the same line even as we scroll the viewport down up to line 7, because each row of tiles 1 and 2 is identical
+        for y_offset in 1..7 {
+            let lcd_row = ppu.draw_scan_line();
+            ppu.bg_viewport_offset.y = y_offset;
+            assert_eq!(lcd_row[..7], [Color::White; 7]);
+            assert_eq!(lcd_row[7..], [Color::LightGray; 153]);
+        }
+
+        // now fill the second tile row in the background map with 1 dark gray tile followed by 31 black tiles
+        ppu.lo_tile_map.tile_indices[1][0] = 2;
+        ppu.lo_tile_map.tile_indices[1][1..].fill(3);
+        ppu.bg_viewport_offset = Coord { x: 0, y: 3 };
+        ppu.line = 5;
+        // we are now drawing line 5 of the LCD screen, which is offset 3 from the top of the background map
+        // This should display the second row of tiles
+        let lcd_row = ppu.draw_scan_line();
+        assert_eq!(lcd_row[..8], [Color::DarkGray; 8]);
+        assert_eq!(lcd_row[8..], [Color::Black; 152]);
+    }
+
+    fn concat<const A: usize, const B: usize>(a: [Color; A], b: [Color; B]) -> [Color; A + B] {
+        let mut res = [Color::White; A + B];
+        res[..A].copy_from_slice(&a);
+        res[A..].copy_from_slice(&b);
+        res
+    }
+
+    #[test]
+    fn test_concat() {
+        assert_eq!(
+            concat([Color::White; 2], [Color::Black; 3]),
+            [
+                Color::White,
+                Color::White,
+                Color::Black,
+                Color::Black,
+                Color::Black
+            ]
+        );
     }
 }

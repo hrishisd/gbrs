@@ -67,6 +67,8 @@ impl Cpu {
     /// E.g. executing the `NOP` instruction will return 4
     pub fn step(&mut self) -> u8 {
         // TODO: if interrupt handled, update t_cycles for step
+        // TODO: check interrupt handling implementation against:
+        //     http://www.codeslinger.co.uk/pages/projects/gameboy/interrupts.html
         // handle interrupts
         let mut handled_interrupt = false;
         if self.ime == ImeState::Enabled {
