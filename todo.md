@@ -4,8 +4,8 @@
 - [x] implement OAM DMA transfer
 - [x] implement lyc compare interrupt
 - [x] implement rendering background
-- [ ] implement rendering objects
-- [ ] implement support for 2-tile objects
+- [x] implement rendering objects
+- [x] implement support for 2-tile objects
 - [ ] implement rendering window
 - [ ] implement sdl2 frontend (testing)
 - [ ] implement terminal frontend

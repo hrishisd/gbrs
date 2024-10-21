@@ -261,6 +261,7 @@ impl Ppu {
     /// Resolve pixel values for a line of the LCD display
     fn draw_scan_line(&self) -> [Color; 160] {
         let mut lcd_line = [Color::Black; 160];
+        let mut lcd_line_bg_and_window_color_ids = [ColorId::Id0; 160];
         if self.bg_enabled {
             let tile_map = match self.bg_tile_map_select {
                 TileMapArea::X9800 => &self.lo_tile_map,
@@ -288,6 +289,7 @@ impl Ppu {
                 let color_id = tile.lines[tile_line_idx as usize].color_ids[tile_col_idx as usize];
                 let color = self.bg_color_palette.lookup(color_id);
                 lcd_line[lcd_x_pos as usize] = color;
+                lcd_line_bg_and_window_color_ids[lcd_x_pos as usize] = color_id;
             }
         }
         if self.obj_enabled {
@@ -296,43 +298,59 @@ impl Ppu {
                 ObjSize::Dim8x16 => 16,
             };
             for obj in self.obj_attribute_memory {
-                // TODO: implement priority
                 // range of lcd lines that the object occupies
                 // The position of the object on the lcd's coordinate system
                 let obj_lcd_y_pos = obj.y_pos as i16 - 16;
-                let obj_lcd_x_pos = obj.y_pos as i16 - 8;
-                let obj_lcd_lines = (obj_lcd_y_pos)..(obj_lcd_y_pos + obj_height);
-                let obj_visible_on_line = obj_lcd_lines.contains(&(self.line as i16));
+                let obj_lcd_x_pos = obj.x_pos as i16 - 8;
+                let obj_visible_on_line = (1..168).contains(&obj.x_pos)
+                    && ((obj_lcd_y_pos)..(obj_lcd_y_pos + obj_height))
+                        .contains(&(self.line as i16));
                 if !obj_visible_on_line {
                     continue;
                 }
-                // render the object (only single-tile object)
-                let tile = self.vram_tile_data.get_tile_from_0x8000(obj.tile_idx);
-                // while line of the tile is on this lcd line?
-                assert!(self.line as i16 >= obj_lcd_y_pos);
-                let line_idx = if obj.y_flip {
-                    8 - (self.line as i16 - obj_lcd_y_pos)
+
+                // The index of the tile line of the object that is on this lcd line
+                let obj_line_idx = if obj.y_flip {
+                    obj_height - (self.line as i16 - obj_lcd_y_pos) - 1
                 } else {
                     self.line as i16 - obj_lcd_y_pos
                 };
-                let tile_line = tile.lines[line_idx as usize];
-                // start rendering the tile from what idx?
-                let color_ids = if obj.x_flip {
-                    let mut clone = tile_line.color_ids.clone();
-                    clone.reverse();
-                    clone
-                } else {
-                    tile_line.color_ids
+
+                let obj_row = {
+                    let line = if obj_line_idx <= 7 {
+                        self.vram_tile_data.get_tile_from_0x8000(obj.tile_idx).lines
+                            [obj_line_idx as usize]
+                    } else {
+                        assert_eq!(obj_height, 16);
+                        self.vram_tile_data
+                            .get_tile_from_0x8000(obj.tile_idx + 1)
+                            .lines[(obj_line_idx - 8) as usize]
+                    };
+                    if obj.x_flip {
+                        let mut clone = line.color_ids.clone();
+                        clone.reverse();
+                        clone
+                    } else {
+                        line.color_ids
+                    }
                 };
-                for (pixel_color_idx, pixel_color_id) in color_ids.iter().enumerate() {
+                for (pixel_color_idx, pixel_color_id) in obj_row.iter().enumerate() {
                     // the index of this pixel in the lcd line
-                    let lcd_line_idx = obj_lcd_x_pos + pixel_color_idx as i16;
+                    let lcd_idx = obj_lcd_x_pos + pixel_color_idx as i16;
                     let is_transparent = *pixel_color_id == ColorId::Id0;
-                    // let is_above_background = obj.priority == Priority::Zero || lcd_line[];
-                    // should we render this pixel?
-                    // lcd_line_idx >= 0
-                    // lcd_line_idx < 160
-                    // priority?
+                    if lcd_idx >= 0
+                        && lcd_idx < 160
+                        && !is_transparent
+                        // check should render over background
+                        && (obj.priority == Priority::Zero
+                            || lcd_line_bg_and_window_color_ids[lcd_idx as usize] == ColorId::Id0 || !self.bg_enabled)
+                    {
+                        let palette = self.obj_color_palettes[match obj.palette {
+                            ObjColorPaletteIdx::Zero => 0,
+                            ObjColorPaletteIdx::One => 1,
+                        }];
+                        lcd_line[lcd_idx as usize] = palette.lookup(*pixel_color_id);
+                    }
                 }
             }
         }
@@ -880,24 +898,242 @@ mod tests {
         assert_eq!(lcd_row[8..], [Color::Black; 152]);
     }
 
-    fn concat<const A: usize, const B: usize>(a: [Color; A], b: [Color; B]) -> [Color; A + B] {
-        let mut res = [Color::White; A + B];
-        res[..A].copy_from_slice(&a);
-        res[A..].copy_from_slice(&b);
-        res
+    #[test]
+    fn draw_obj_only() {
+        let mut ppu = Ppu::new();
+        ppu.bg_enabled = false;
+        ppu.window_enabled = false;
+        ppu.obj_enabled = true;
+        ppu.line = 0;
+        ppu.obj_size = ObjSize::Dim8x8;
+        ppu.obj_color_palettes[0] = ColorPalette(
+            Color::White, // transparent
+            Color::LightGray,
+            Color::DarkGray,
+            Color::Black,
+        );
+
+        // Make an 8x8 object that is 4 blocks of 4x4 tiles, so that we can test flips
+        //  [transparent] [light gray]
+        //  [black] [dark gray]
+        let obj_tile = {
+            use ColorId::*;
+            Tile {
+                lines: [
+                    TileLine {
+                        color_ids: [Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2],
+                    },
+                ],
+            }
+        };
+        ppu.vram_tile_data.tile_data_blocks[0][0] = obj_tile;
+        ppu.obj_attribute_memory[0] = ObjectAttributes {
+            y_pos: 0,
+            x_pos: 0,
+            tile_idx: 0,
+            priority: Priority::Zero,
+            y_flip: false,
+            x_flip: false,
+            palette: ObjColorPaletteIdx::Zero,
+        };
+        // first, at position 0,0, the object should be invisible
+        let line = ppu.draw_scan_line();
+        assert_eq!(line, [Color::Black; 160]);
+
+        // now, make the object visible by moving it down 9 rows and to the right 1 column
+        ppu.obj_attribute_memory[0].y_pos = 9;
+        ppu.obj_attribute_memory[0].x_pos = 1;
+        let line = ppu.draw_scan_line();
+        assert_eq!(line[0], Color::DarkGray);
+        // The rest of the screen should still be black
+        assert_eq!(line[1..], [Color::Black; 159]);
+        ppu.line = 1;
+        assert_eq!(ppu.draw_scan_line(), [Color::Black; 160]);
+
+        // Now, flip the object vertically and render the last line of the object on the first line of the lcd
+        ppu.line = 0;
+        ppu.obj_attribute_memory[0].x_pos = 8;
+        ppu.obj_attribute_memory[0].y_pos = 9;
+        ppu.obj_attribute_memory[0].y_flip = true;
+
+        let line = ppu.draw_scan_line();
+        assert_eq!(line[..4], [Color::Black; 4]);
+        assert_eq!(line[4..8], [Color::LightGray; 4]);
+        assert_eq!(line[8..], [Color::Black; 152]);
+
+        // Now flip the object horizontally and vertically and render the last line of the object
+        ppu.obj_attribute_memory[0].x_flip = true;
+        let line = ppu.draw_scan_line();
+        assert_eq!(line[..4], [Color::LightGray; 4]);
+        assert_eq!(line[4..], [Color::Black; 156]);
+
+        // Now unflip the object vertically and render the last line of the object
+        ppu.obj_attribute_memory[0].y_flip = false;
+        let line = ppu.draw_scan_line();
+        assert_eq!(line[..4], [Color::DarkGray; 4]);
+        assert_eq!(line[4..], [Color::Black; 156]);
     }
 
     #[test]
-    fn test_concat() {
-        assert_eq!(
-            concat([Color::White; 2], [Color::Black; 3]),
-            [
-                Color::White,
-                Color::White,
-                Color::Black,
-                Color::Black,
-                Color::Black
-            ]
+    fn draw_stacked_obj() {
+        let mut ppu = Ppu::new();
+        ppu.bg_enabled = false;
+        ppu.window_enabled = false;
+        ppu.obj_enabled = true;
+        ppu.line = 0;
+        ppu.obj_size = ObjSize::Dim8x16;
+        ppu.obj_color_palettes[0] = ColorPalette(
+            Color::White, // transparent
+            Color::LightGray,
+            Color::DarkGray,
+            Color::Black,
         );
+
+        // Make two 8x8 object tiles
+        // The first tile should have light gray in the top-left pixel and dark gray everywhere else
+        let dark_tile = {
+            use ColorId::*;
+            Tile {
+                lines: [
+                    TileLine {
+                        color_ids: [Id1, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
+                    },
+                    TileLine {
+                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
+                    },
+                ],
+            }
+        };
+        // The second tile should have dark gray in the top-left pixel and light gray everywhere else
+        let light_tile = {
+            use ColorId::*;
+            Tile {
+                lines: [
+                    TileLine {
+                        color_ids: [Id2, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
+                    },
+                    TileLine {
+                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
+                    },
+                ],
+            }
+        };
+
+        ppu.vram_tile_data.tile_data_blocks[0][0] = dark_tile;
+        ppu.vram_tile_data.tile_data_blocks[0][1] = light_tile;
+        ppu.obj_attribute_memory[0] = ObjectAttributes {
+            y_pos: 0,
+            x_pos: 0,
+            tile_idx: 0,
+            priority: Priority::Zero,
+            y_flip: false,
+            x_flip: false,
+            palette: ObjColorPaletteIdx::Zero,
+        };
+        // first, at position 0,0, the object should be invisible
+        let line = ppu.draw_scan_line();
+        assert_eq!(line, [Color::Black; 160]);
+
+        // now, make the object visible by moving it down a single row row and to the right 8 columns
+        ppu.obj_attribute_memory[0].y_pos = 1;
+        ppu.obj_attribute_memory[0].x_pos = 8;
+        let line = ppu.draw_scan_line();
+        assert_eq!(line[..8], [Color::LightGray; 8]);
+        // The rest of the screen should still be black
+        assert_eq!(line[8..], [Color::Black; 152]);
+        ppu.line = 1;
+        assert_eq!(ppu.draw_scan_line(), [Color::Black; 160]);
+
+        // Now flip the object vertically and rerender the first line of the object
+        ppu.obj_attribute_memory[0].y_flip = true;
+        ppu.line = 0;
+
+        let line = ppu.draw_scan_line();
+        assert_eq!(line[0], Color::LightGray);
+        assert_eq!(line[1..8], [Color::DarkGray; 7]);
+        assert_eq!(line[8..], [Color::Black; 152]);
+
+        // Now flip the object horizontally and vertically and render the first line of the object
+        ppu.obj_attribute_memory[0].x_flip = true;
+        let line = ppu.draw_scan_line();
+        assert_eq!(line[..7], [Color::DarkGray; 7]);
+        assert_eq!(line[7], Color::LightGray);
+        assert_eq!(line[8..], [Color::Black; 152]);
+
+        // Now, keep the object flipped vertically, move it fully into the screen, and check its rendered correctly
+        ppu.obj_attribute_memory[0].y_flip = true;
+        ppu.obj_attribute_memory[0].x_flip = false;
+        ppu.obj_attribute_memory[0].y_pos = 16;
+        ppu.line = 0;
+        let top_line = ppu.draw_scan_line();
+        assert_eq!(top_line[..8], [Color::LightGray; 8]);
+        ppu.line = 7;
+        let first_tile_bottom_line = ppu.draw_scan_line();
+        assert_eq!(first_tile_bottom_line[0], Color::DarkGray);
+        assert_eq!(first_tile_bottom_line[1..8], [Color::LightGray; 7]);
+        ppu.line = 8;
+        let second_tile_top_line = ppu.draw_scan_line();
+        assert_eq!(second_tile_top_line[..8], [Color::DarkGray; 8]);
+        ppu.line = 15;
+        let second_tile_bottom_line = ppu.draw_scan_line();
+        assert_eq!(second_tile_bottom_line[0], Color::LightGray);
+        assert_eq!(second_tile_bottom_line[1..8], [Color::DarkGray; 7]);
     }
 }
