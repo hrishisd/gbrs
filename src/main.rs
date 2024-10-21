@@ -1,153 +1,119 @@
-use rand::{self, Rng};
-use std::{
-    io::{stdout, Write},
-    thread::{self},
-    time::{self, Duration, Instant},
-};
+use std::thread;
+use std::time::{self};
 
-const _OFF_COLOR_CODE: i32 = 232;
-const _ON_COLOR_CODE: i32 = 214;
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use sdl2::pixels::PixelFormatEnum;
 
 use gbrs::cpu;
-
-fn _test_rendering() {
-    // generate random 160 wide x 144 tall grid of bools
-    let mut rng = rand::thread_rng();
-    let mut displays: Vec<[[bool; 160]; 144]> = Vec::new();
-    let start = Instant::now();
-    for _ in 0..1_000 {
-        displays.push([[false; 160]; 144]);
-        for row in 0..144 {
-            for col in 0..160 {
-                let last_idx = displays.len() - 1;
-                displays[last_idx][row][col] = rng.gen_bool(0.5);
-            }
-        }
-    }
-    let elapsed = start.elapsed();
-    let mut times = vec![];
-    println!("Generated displays in {:.2?}", elapsed);
-    println!("switching to alternate screen");
-    thread::sleep(Duration::from_secs(2));
-
-    // switch to alternate screen buffer
-    print!("\x1b[?1049h");
-    // hide the cursor before rendering
-    print!("\x1b[?25l");
-    stdout().flush().unwrap();
-    thread::sleep(Duration::from_secs(5));
-
-    for display in displays {
-        let display_string = _generate_display_string(display);
-        let start = Instant::now();
-        print!("{}", display_string);
-        stdout().flush().unwrap();
-        times.push(start.elapsed());
-    }
-    println!("Pausing for a bit to observe scroll back");
-    thread::sleep(time::Duration::from_secs(5));
-
-    // Show the cursor
-    print!("\x1b[?25h");
-    // Switch back to the normal screen buffer
-    print!("\x1b[?1049l");
-    stdout().flush().unwrap();
-    println!("Switched back to normal screen buffer");
-    stdout().flush().unwrap();
-    let total_render_time: Duration = times.iter().sum();
-    println!("total render time: {total_render_time:?}");
-    println!(
-        "avg render time per frame: {:?}",
-        total_render_time / times.len() as u32
-    );
-    println!("max frame render time: {:?}", times.iter().max());
-}
-
-// Generate a string, that when printed in raw mode, draws the display to the terminal window
-fn _generate_display_string(display: [[bool; 160]; 144]) -> String {
-    assert!(
-        display.len() % 2 == 0,
-        "Expected an even number of rows in the display, got {}",
-        display.len()
-    );
-    let mut output = String::new();
-    // Erase from cursor to beginning of screen
-    // output.push_str("\x1b[1J");
-    // Move the cursor to the top-left corner
-    output.push_str("\x1b[H");
-
-    let lower_half_block = '▄';
-    let upper_half_block = '▀';
-    let full_block = '█';
-    // set the background color
-    output.push_str(format!("\x1b[48;5;{}m", _OFF_COLOR_CODE).as_str());
-    // set the foreground color
-    output.push_str(format!("\x1b[38;5;{}m", _ON_COLOR_CODE).as_str());
-    for row_idx in (0..display.len()).step_by(2) {
-        for col_idx in 0..display[0].len() {
-            let top_pixel = display[row_idx][col_idx];
-            let bottom_pixel = display[row_idx + 1][col_idx];
-            if top_pixel && bottom_pixel {
-                output.push(full_block)
-            } else if top_pixel {
-                output.push(upper_half_block);
-            } else if bottom_pixel {
-                output.push(lower_half_block);
-            } else {
-                output.push(' ');
-            }
-        }
-        output.push('\n');
-        output.push('\r');
-    }
-    output
-}
+use gbrs::Color;
 
 /// CPU frequency from pandocs: https://gbdev.io/pandocs/Specifications.html#dmg_clk
 const CYCLES_PER_SECOND: u32 = 4194304;
 const FPS: u32 = 60;
 const CYCLES_PER_FRAME: u32 = CYCLES_PER_SECOND / FPS;
+const NANOS_PER_FRAME: u64 = 1_000_000_000 / FPS as u64;
+const FRAME_DURATION: time::Duration = time::Duration::from_nanos(NANOS_PER_FRAME);
 
-fn main() {
-    //
-    // void Emulator::Update( )
-    // {
-    //     const int MAXCYCLES = 69905 ;
-    //     int cyclesThisUpdate = 0 ;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Usage: cargo run -- rom_path
+    // read the rom from the path provided
+    // initialize the cpu with the rom
+    // execute the rom
+    // render the display at 60 frames per second
+    let mut args = std::env::args();
+    let _ = args.next();
+    if let Some(rom_path) = args.next() {
+        let rom = std::fs::read(rom_path)?;
+        run_rom(&rom)
+    } else {
+        let rom = include_bytes!("../roms/Tetris (World) (Rev 1).gb");
+        run_rom(rom)
+    }
+    // let rom_path = std::env::args()
+    //     .nth(1)
+    //     .expect("USAGE:\n\t<program> <rom_path>");
+    // let file = std::fs::File::create("out.txt").unwrap();
+    // let file = std::io::BufWriter::new(file);
+    // let mut cpu = cpu::Cpu::_debug_mode(&rom, file);
+    // let rom = include_bytes!("../roms/Tetris (World) (Rev 1).gb");
+    // run_rom(rom)
+}
 
-    //     while (cyclesThisUpdate < MAXCYCLES)
-    //     {
-    //        int cycles = ExecuteNextOpcode( ) ;
-    //        cyclesThisUpdate+=cycles ;
-    //        UpdateTimers(cycles) ;
-    //        UpdateGraphics(cycles) ;
-    //        DoInterupts( ) ;
-    //     }
-    //   RenderScreen( ) ;
-    //   }
-
-    // experiment();
-    // test_rendering();
-    let mut cpu = crate::cpu::Cpu::create(&[]);
+fn run_rom(rom: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut cpu = crate::cpu::Cpu::create(rom);
+    let sdl_context = sdl2::init()?;
+    let video_subsystem = sdl_context.video()?;
+    let window = video_subsystem
+        .window("GB Emulator", 160 * 2, 144 * 2)
+        .position_centered()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+    canvas.set_scale(2.0, 2.0)?;
+    let mut event_pump = sdl_context.event_pump()?;
+    let texture_creator = canvas.texture_creator();
+    let mut texture = texture_creator
+        .create_texture_streaming(PixelFormatEnum::RGB24, 160, 144)
+        .map_err(|e| e.to_string())?;
     loop {
-        // render single frame
+        let frame_start = std::time::Instant::now();
+        // Execute CPU cycles for one frame
         let mut cycles_in_frame: u32 = 0;
         while cycles_in_frame < CYCLES_PER_FRAME {
             let cycles = cpu.step();
             cycles_in_frame += cycles as u32;
-            // update timers
-            // update graphics
-            // handle interrupts
         }
-        // render screen
-        // sleep
+
+        // Handle events
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. } => return Ok(()),
+                Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => return Ok(()),
+                _ => {}
+            }
+        }
+
+        // Update the texture with the lcd_display data
+        texture
+            .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+                for (y, row) in cpu.mmu.ppu.lcd_display.iter().enumerate() {
+                    for (x, &color) in row.iter().enumerate() {
+                        let offset = (y * 160 + x) * 3;
+                        let sdl_color = match color {
+                            Color::White => [255, 255, 255],
+                            Color::LightGray => [192, 192, 192],
+                            Color::DarkGray => [96, 96, 96],
+                            Color::Black => [0, 0, 0],
+                        };
+                        buffer[offset..offset + 3].copy_from_slice(&sdl_color);
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+
+        // Clear the canvas
+        canvas.clear();
+
+        // Copy the texture to the canvas
+        canvas.copy(&texture, None, None)?;
+
+        // Present the canvas
+        canvas.present();
+
+        // Sleep to maintain frame rate
+        // let frame_duration = frame_start.elapsed();
+        // if let Some(frame_remaining_duration) = FRAME_DURATION.checked_sub(frame_duration) {
+        //     thread::sleep(frame_remaining_duration);
+        // }
     }
 }
 
-#[test]
-fn test_generate_display_string() {
-    println!("Printing from here:");
-    let display = [[true; 160]; 144];
-    let display_string = _generate_display_string(display);
-    println!("{}", display_string);
-}
+// #[test]
+// fn test_run_rom() {
+//     let rom = include_bytes!("../roms/Tetris (World) (Rev 1).gb");
+//     run_rom(rom).unwrap();
+// }

@@ -126,8 +126,7 @@ impl Ppu {
             0x8000..=0x97FF => {
                 let idx = TileByteIdx::from_addr(addr);
                 let tile = {
-                    let this = &self;
-                    let block = &this.vram_tile_data.tile_data_blocks[idx.block_idx];
+                    let block = &self.vram_tile_data.tile_data_blocks[idx.block_idx];
                     &block[idx.tile_idx]
                 };
                 tile.as_bytes()[idx.byte_idx]
@@ -354,7 +353,37 @@ impl Ppu {
                 }
             }
         }
-        if self.window_enabled {}
+        if self.window_enabled {
+            let window_tile_map = match self.window_tile_map_select {
+                TileMapArea::X9800 => &self.lo_tile_map,
+                TileMapArea::X9C00 => &self.hi_tile_map,
+            };
+            let window_y = self.line - self.window_top_left.y;
+            for window_x in 0u8..160 {
+                let lcd_x_pos = window_x.wrapping_add(self.window_top_left.x.wrapping_sub(7));
+                if lcd_x_pos >= 160 {
+                    continue;
+                }
+                let tile_x = window_x / 8;
+                let tile_y = window_y / 8;
+                let tile_idx = window_tile_map.tile_indices[tile_y as usize][tile_x as usize];
+                let tile = match self.bg_and_window_tile_data_select {
+                    BgAndWindowTileDataArea::X8000 => {
+                        self.vram_tile_data.get_tile_from_0x8000(tile_idx)
+                    }
+                    BgAndWindowTileDataArea::X8800 => {
+                        self.vram_tile_data.get_tile_from_0x8800_signed(tile_idx)
+                    }
+                };
+                let tile_line_idx = window_y % 8;
+                let tile_col_idx = window_x % 8;
+                let color_id = tile.lines[tile_line_idx as usize].color_ids[tile_col_idx as usize];
+                let color = self.bg_color_palette.lookup(color_id);
+                lcd_line[lcd_x_pos as usize] = color;
+                lcd_line_bg_and_window_color_ids[lcd_x_pos as usize] = color_id;
+            }
+        }
+
         lcd_line
     }
 
@@ -366,7 +395,9 @@ impl Ppu {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TileByteIdx {
+    /// The index of the block in the vram tile data
     block_idx: usize,
+    /// The index of the tile in the block
     tile_idx: usize,
     /// The idx of a byte in the 16 byte arrray associated with a Tile
     byte_idx: usize,
@@ -390,7 +421,7 @@ impl TileByteIdx {
                     0 | 1 | 2,
                     "BUG: Invalid tile block ID {block_idx}"
                 );
-                let tile_idx = ((addr & 0x07F0) >> 8) as usize;
+                let tile_idx = (addr as usize >> 4) % 128;
                 let byte_idx = (addr & 0x0F) as usize;
                 // Each line consists of 2 bytes
                 let line_idx = byte_idx >> 1;
@@ -566,7 +597,7 @@ impl From<u8> for ColorPalette {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mode {
+pub enum Mode {
     /// Takes 80 clock cycles. While in this mode, the PPU fetches assets from memory
     ScanlineOAM,
     /// Takes 172 to 289 clock cycles depending on the volume of assets being rendered
@@ -765,6 +796,50 @@ pub enum Priority {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tile_idx_calculation() {
+        // Test first tile in block 0
+        assert_eq!(
+            TileByteIdx::from_addr(0x8000),
+            TileByteIdx {
+                block_idx: 0,
+                tile_idx: 0,
+                byte_idx: 0,
+                line_idx: 0,
+            }
+        );
+        // Test block 0
+        assert_eq!(
+            TileByteIdx::from_addr(0x8490),
+            TileByteIdx {
+                block_idx: 0,
+                tile_idx: 0x49,
+                byte_idx: 0,
+                line_idx: 0,
+            }
+        );
+        // Test block 1
+        assert_eq!(
+            TileByteIdx::from_addr(0x8B80),
+            TileByteIdx {
+                block_idx: 1,
+                tile_idx: 0x38,
+                byte_idx: 0,
+                line_idx: 0,
+            }
+        );
+        // Test block 2
+        assert_eq!(
+            TileByteIdx::from_addr(0x95A0),
+            TileByteIdx {
+                block_idx: 2,
+                tile_idx: 0x5A,
+                byte_idx: 0,
+                line_idx: 0,
+            }
+        );
+    }
 
     #[test]
     fn tile_line_byte_conversion() {

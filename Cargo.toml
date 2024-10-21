@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+sdl2 = "0.34"
 rand = "0.8"
 proptest = "1"
 enumset = "1"
-
 [lib]
 name = "gbrs"
 path = "src/lib.rs"

@@ -47,7 +47,7 @@ impl Cpu {
 
     /// Pushes the word on to the stack in little-endian order (the lower-order byte is at the lower address).
     pub fn push_u16(&mut self, word: u16) {
-        println!("PUSH {:#04X} at addr {:#04X}", word, self.regs.sp);
+        // println!("PUSH {:#04X} at addr {:#04X}", word, self.regs.sp);
         let [lo, hi] = word.to_le_bytes();
         self.regs.sp = self.regs.sp.wrapping_sub(1);
         self.mmu.write_byte(self.regs.sp, hi);
@@ -60,11 +60,11 @@ impl Cpu {
         self.regs.sp = self.regs.sp.wrapping_add(1);
         let hi = self.mmu.read_byte(self.regs.sp);
         self.regs.sp = self.regs.sp.wrapping_add(1);
-        println!(
-            "POP {:04X} at addr {:#04X}",
-            u16::from_le_bytes([lo, hi]),
-            self.regs.sp
-        );
+        // println!(
+        //     "POP {:04X} at addr {:#04X}",
+        //     u16::from_le_bytes([lo, hi]),
+        //     self.regs.sp
+        // );
         u16::from_le_bytes([lo, hi])
     }
 
@@ -896,6 +896,7 @@ impl Cpu {
     /// JP n16
     pub fn jp_n16(&mut self) -> u8 {
         let addr = self.fetch_imm16();
+        println!("Jumping to {addr:#X}");
         self.regs.pc = addr;
         16
     }
@@ -1086,8 +1087,9 @@ impl Cpu {
     }
 
     pub fn halt(&mut self) -> u8 {
-        // TODO: implement while implementing interrupts
-        todo!()
+        // TODO: understand and implement the halt bug
+        self.is_halted = true;
+        4
     }
 
     pub fn nop(&self) -> u8 {
@@ -1130,6 +1132,7 @@ mod tests {
         // NOP
         // NOP
         let mut cpu = Cpu::create(&[0xFB, 0x00, 0x00]);
+        cpu.mmu.in_boot_rom = false;
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
         // ime should still be false
@@ -1150,6 +1153,7 @@ mod tests {
         // DI
         // NOP
         let mut cpu = Cpu::create(&[0xFB, 0xF3, 0x00]);
+        cpu.mmu.in_boot_rom = false;
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
         // ime should be pending

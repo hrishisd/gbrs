@@ -22,12 +22,13 @@ enum ImeState {
 pub struct Cpu {
     // TODO: remove pub
     pub regs: Registers,
-    mmu: Mmu,
+    pub mmu: Mmu,
     /// AKA, the `IME` flag.
     ///
     /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
     ime: ImeState,
     dbg_log_file: Option<BufWriter<File>>,
+    is_halted: bool,
 }
 
 impl Cpu {
@@ -37,11 +38,12 @@ impl Cpu {
             mmu: Mmu::create(rom),
             ime: ImeState::Disabled,
             dbg_log_file: None,
+            is_halted: false,
         }
     }
 
     /// Initializes the CPU's state to the state it should have immediately after executing the boot ROM
-    fn _debug_mode(test_rom: &[u8], dbg_log_file: BufWriter<File>) -> Self {
+    pub fn _debug_mode(test_rom: &[u8], dbg_log_file: BufWriter<File>) -> Self {
         Cpu {
             regs: Registers {
                 a: 0x01,
@@ -58,6 +60,7 @@ impl Cpu {
             mmu: Mmu::create(test_rom),
             ime: ImeState::Disabled,
             dbg_log_file: Some(dbg_log_file),
+            is_halted: false,
         }
     }
 
@@ -78,6 +81,7 @@ impl Cpu {
                     && self.mmu.interrupts_enabled.contains(interrupt_kind)
                 {
                     self.ime = ImeState::Disabled;
+                    self.is_halted = false;
                     self.mmu.interrupts_requested.remove(interrupt_kind);
                     self.push_u16(self.regs.pc);
                     self.regs.pc = match interrupt_kind {
@@ -107,17 +111,23 @@ impl Cpu {
         )
         .unwrap();
         }
+        println!(
+        "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
+        self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3));
 
-        // execute opcode
-        let opcode = self.mmu.read_byte(self.regs.pc);
-        // println!("  PC: {:#04X}, opcode: {:#02X}", self.regs.pc, opcode);
-        self.regs.pc += 1;
-        let t_cycles = self.execute(opcode);
-        assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
+        if self.is_halted {
+            4
+        } else {
+            // execute opcode
+            let opcode = self.mmu.read_byte(self.regs.pc);
+            self.regs.pc += 1;
+            let t_cycles = self.execute(opcode);
+            assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
 
-        self.mmu.step(t_cycles);
+            self.mmu.step(t_cycles);
 
-        t_cycles + if handled_interrupt { 20 } else { 0 }
+            t_cycles + if handled_interrupt { 20 } else { 0 }
+        }
     }
 
     /// Execute a single instruction and return the number of system clock cycles (T-cycles) the instruction takes.
@@ -723,13 +733,15 @@ mod test {
         }
     }
 
-    #[ignore]
+    // #[ignore]
     #[test]
     fn test_debug_rom() {
         let file = std::fs::File::create("out.txt").unwrap();
         let file = BufWriter::new(file);
         let test_rom =
-            include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/02-interrupts.gb");
+            // include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/02-interrupts.gb");
+            // include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb");
+            include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/11-op a,(hl).gb");
         let mut cpu = Cpu::_debug_mode(test_rom, file);
         let mut line = 1;
         loop {

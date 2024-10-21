@@ -16,7 +16,9 @@ pub struct Mmu {
     ext_ram: [u8; 0x2000],
     work_ram: [u8; 0x2000],
     high_ram: [u8; 0x80],
-    ppu: Ppu,
+    boot_rom: [u8; 0x100],
+    pub in_boot_rom: bool,
+    pub ppu: Ppu,
     /// A set of flags that indicates whether the interrupt handler for each corresponding piece of hardware may be called.
     ///
     /// also referred to as `IE`
@@ -32,6 +34,7 @@ pub struct Mmu {
 
 impl Mmu {
     pub fn create(rom: &[u8]) -> Self {
+        let boot_rom = include_bytes!("../roms/dmg_boot.bin");
         let mut rom_bank_0 = [0; 0x4000];
         let upto_idx = rom_bank_0.len().min(rom.len());
         rom_bank_0[..upto_idx].copy_from_slice(&rom[..upto_idx]);
@@ -53,6 +56,8 @@ impl Mmu {
             interrupts_requested: EnumSet::empty(),
             timer: Timer::new(TimerFrequency::F4KiHz),
             divider: Timer::new(TimerFrequency::F16KiHz),
+            boot_rom: boot_rom.clone(),
+            in_boot_rom: true,
         }
     }
 
@@ -70,7 +75,13 @@ impl Mmu {
     pub fn read_byte(&self, addr: u16) -> u8 {
         match addr {
             // ROM bank 0
-            0x0000..=0x3FFF => self.rom_bank_0[addr as usize],
+            0x0000..=0x3FFF => {
+                if self.in_boot_rom && addr < 0x100 {
+                    self.boot_rom[addr as usize]
+                } else {
+                    self.rom_bank_0[addr as usize]
+                }
+            }
             // ROM bank 01-NN
             0x4000..=0x7FFF => self.rom_bank_n[(addr & 0x3FFF) as usize],
             // VRAM
@@ -185,7 +196,7 @@ impl Mmu {
             }
             0xFF50 => {
                 // set to non-zero to disable boot ROM
-                todo!("unmap boot ROM")
+                panic!("Attempted to read from boot ROM disable register")
             }
             0xFF51..=0xFF55 => {
                 // VRAM DMA
@@ -297,7 +308,7 @@ impl Mmu {
                 self.timer.enabled = enable;
                 self.timer.frequency = frequency;
             }
-            0xFF0F => self.interrupts_requested = EnumSet::<InterruptKind>::from_u8(byte),
+            0xFF0F => self.interrupts_requested = EnumSet::<InterruptKind>::from_u8_truncated(byte),
             0xFF10..=0xFF26 => {
                 // TODO: implement audio
             }
@@ -376,7 +387,9 @@ impl Mmu {
             }
             0xFF50 => {
                 // set to non-zero to disable boot ROM
-                todo!()
+                if byte != 0 {
+                    self.in_boot_rom = false;
+                }
             }
             0xFF51..=0xFF55 => {
                 // VRAM DMA
@@ -395,7 +408,7 @@ impl Mmu {
                 self.high_ram[addr as usize - 0xFF80] = byte;
             }
             // interrupt enable register
-            0xFFFF => self.interrupts_enabled = EnumSet::<InterruptKind>::from_u8(byte),
+            0xFFFF => self.interrupts_enabled = EnumSet::<InterruptKind>::from_u8_truncated(byte),
             _ => panic!("BUG: unhandled register write for addr: {addr:X}"),
         }
     }
@@ -424,7 +437,7 @@ mod tests {
     use super::*;
     #[test]
     fn interrupts_from_byte() {
-        let flags = EnumSet::<InterruptKind>::from_u8_truncated(0b00011111);
+        let flags = EnumSet::<InterruptKind>::from_u8(0b00011111);
         let all_set = EnumSet::all();
         assert_eq!(flags, all_set);
 
@@ -434,6 +447,10 @@ mod tests {
 
         let flags = EnumSet::<InterruptKind>::from_u8(0);
         assert_eq!(flags, EnumSet::empty());
+
+        let flags = EnumSet::<InterruptKind>::from_u8_truncated(0xFF);
+        let all_set = EnumSet::all();
+        assert_eq!(flags, all_set);
     }
 
     #[test]
