@@ -6,11 +6,12 @@
 - [x] implement rendering background
 - [x] implement rendering objects
 - [x] implement support for 2-tile objects
-- [ ] implement rendering window
-- [ ] implement sdl2 frontend (testing)
+- [x] implement rendering window
+- [x] implement sdl2 frontend (testing)
+- [x] unmap bootrom (set ff50 to nonzero value)
 - [ ] implement terminal frontend
 - [ ] support rom banking
 - [ ] double check interrupt handling
 - [ ] implement the HALT instruction
+- [ ] wrap in CLI and configure logging and framerate
 - [ ] implement the STOP instruction properly
-- [ ] unmap bootrom (set ff50 to nonzero value)

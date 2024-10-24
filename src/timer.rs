@@ -22,6 +22,7 @@ impl TimerFrequency {
     }
 }
 
+#[derive(Debug)]
 pub struct Timer {
     pub frequency: TimerFrequency,
     pub enabled: bool,
@@ -35,10 +36,20 @@ pub struct Timer {
 }
 
 impl Timer {
-    pub fn new(frequency: TimerFrequency) -> Self {
+    pub fn disabled(frequency: TimerFrequency) -> Self {
         Timer {
             frequency,
             enabled: false,
+            tma: 0,
+            value: 0,
+            t_cycles_count: 0,
+        }
+    }
+
+    pub fn enabled(frequency: TimerFrequency) -> Self {
+        Timer {
+            frequency,
+            enabled: true,
             tma: 0,
             value: 0,
             t_cycles_count: 0,
@@ -53,6 +64,7 @@ impl Timer {
 
         self.t_cycles_count += t_cycles as u16;
         if self.t_cycles_count > self.frequency.t_cycles_per_tick() {
+            self.t_cycles_count %= self.frequency.t_cycles_per_tick();
             self.value = self.value.wrapping_add(1);
             if self.value == 0 {
                 self.value = self.tma;

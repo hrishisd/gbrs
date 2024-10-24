@@ -326,7 +326,7 @@ impl Ppu {
                             .lines[(obj_line_idx - 8) as usize]
                     };
                     if obj.x_flip {
-                        let mut clone = line.color_ids.clone();
+                        let mut clone = line.color_ids;
                         clone.reverse();
                         clone
                     } else {
@@ -337,9 +337,8 @@ impl Ppu {
                     // the index of this pixel in the lcd line
                     let lcd_idx = obj_lcd_x_pos + pixel_color_idx as i16;
                     let is_transparent = *pixel_color_id == ColorId::Id0;
-                    if lcd_idx >= 0
-                        && lcd_idx < 160
-                        && !is_transparent
+                    if (0..160).contains(&lcd_idx) && 
+                        !is_transparent
                         // check should render over background
                         && (obj.priority == Priority::Zero
                             || lcd_line_bg_and_window_color_ids[lcd_idx as usize] == ColorId::Id0 || !self.bg_enabled)

@@ -10,8 +10,9 @@ use gbrs::Color;
 
 /// CPU frequency from pandocs: https://gbdev.io/pandocs/Specifications.html#dmg_clk
 const CYCLES_PER_SECOND: u32 = 4194304;
-const FPS: u32 = 60;
-const CYCLES_PER_FRAME: u32 = CYCLES_PER_SECOND / FPS;
+const SPEED_MOD: u32 = 4;
+const FPS: u32 = 120;
+const CYCLES_PER_FRAME: u32 = SPEED_MOD * CYCLES_PER_SECOND / FPS;
 const NANOS_PER_FRAME: u64 = 1_000_000_000 / FPS as u64;
 const FRAME_DURATION: time::Duration = time::Duration::from_nanos(NANOS_PER_FRAME);
 
@@ -33,15 +34,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_path = std::env::args()
     //     .nth(1)
     //     .expect("USAGE:\n\t<program> <rom_path>");
-    // let file = std::fs::File::create("out.txt").unwrap();
-    // let file = std::io::BufWriter::new(file);
-    // let mut cpu = cpu::Cpu::_debug_mode(&rom, file);
-    // let rom = include_bytes!("../roms/Tetris (World) (Rev 1).gb");
     // run_rom(rom)
 }
 
 fn run_rom(rom: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut cpu = crate::cpu::Cpu::create(rom);
+    let file = std::fs::File::create("out.txt").unwrap();
+    let file = std::io::BufWriter::new(file);
+    let mut cpu = cpu::Cpu::create(rom);
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
     let window = video_subsystem
@@ -61,6 +60,10 @@ fn run_rom(rom: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         // Execute CPU cycles for one frame
         let mut cycles_in_frame: u32 = 0;
         while cycles_in_frame < CYCLES_PER_FRAME {
+            // if cpu.regs.pc == 0x101 {
+            //     println!("FINISHED EXECUTING BOOT ROM");
+            //     std::process::exit(0);
+            // }
             let cycles = cpu.step();
             cycles_in_frame += cycles as u32;
         }
@@ -105,15 +108,9 @@ fn run_rom(rom: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         canvas.present();
 
         // Sleep to maintain frame rate
-        // let frame_duration = frame_start.elapsed();
-        // if let Some(frame_remaining_duration) = FRAME_DURATION.checked_sub(frame_duration) {
-        //     thread::sleep(frame_remaining_duration);
-        // }
+        let frame_duration = frame_start.elapsed();
+        if let Some(frame_remaining_duration) = FRAME_DURATION.checked_sub(frame_duration) {
+            thread::sleep(frame_remaining_duration);
+        }
     }
 }
-
-// #[test]
-// fn test_run_rom() {
-//     let rom = include_bytes!("../roms/Tetris (World) (Rev 1).gb");
-//     run_rom(rom).unwrap();
-// }

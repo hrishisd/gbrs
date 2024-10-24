@@ -44,7 +44,7 @@ impl Cpu {
 
     /// Initializes the CPU's state to the state it should have immediately after executing the boot ROM
     pub fn _debug_mode(test_rom: &[u8], dbg_log_file: BufWriter<File>) -> Self {
-        Cpu {
+        let mut cpu = Cpu {
             regs: Registers {
                 a: 0x01,
                 f: 0xB0,
@@ -57,11 +57,20 @@ impl Cpu {
                 sp: 0xFFFE,
                 pc: 0x0100,
             },
-            mmu: Mmu::create(test_rom),
+            mmu: Mmu::_debug_mode(test_rom),
             ime: ImeState::Disabled,
             dbg_log_file: Some(dbg_log_file),
             is_halted: false,
+        };
+        if let Some(file) = &mut cpu.dbg_log_file {
+            writeln!(
+                file,
+                    "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
+                    cpu.regs.a, cpu.regs.f, cpu.regs.b, cpu.regs.c, cpu.regs.d, cpu.regs.e, cpu.regs.h, cpu.regs.l, cpu.regs.sp, cpu.regs.pc, cpu.mmu.read_byte(cpu.regs.pc), cpu.mmu.read_byte(cpu.regs.pc+1), cpu.mmu.read_byte(cpu.regs.pc+2), cpu.mmu.read_byte(cpu.regs.pc+3)
+            )
+                .unwrap();
         }
+        cpu
     }
 
     /// Fetch, decode, and execute a single instruction.
@@ -73,6 +82,9 @@ impl Cpu {
         // TODO: check interrupt handling implementation against:
         //     http://www.codeslinger.co.uk/pages/projects/gameboy/interrupts.html
         // handle interrupts
+        // println!(
+        //     "IME: {:?} HALTED: {:?}, IE: {:?}, IF: {:?}\nA:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
+        //     self.ime, self.is_halted, self.mmu.interrupts_enabled, self.mmu.interrupts_requested, self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3));
         let mut handled_interrupt = false;
         if self.ime == ImeState::Enabled {
             use InterruptKind::*;
@@ -96,6 +108,11 @@ impl Cpu {
                     break;
                 }
             }
+        } else {
+            let pending_interrupts = self.mmu.interrupts_requested & self.mmu.interrupts_enabled;
+            if !pending_interrupts.is_empty() && self.is_halted {
+                self.is_halted = false;
+            }
         }
 
         // update ime state
@@ -103,19 +120,8 @@ impl Cpu {
             self.ime = ImeState::Enabled;
         }
 
-        if let Some(file) = &mut self.dbg_log_file {
-            writeln!(
-            file,
-            "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-            self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3)
-        )
-        .unwrap();
-        }
-        println!(
-        "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-        self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3));
-
         if self.is_halted {
+            self.mmu.step(4);
             4
         } else {
             // execute opcode
@@ -123,6 +129,14 @@ impl Cpu {
             self.regs.pc += 1;
             let t_cycles = self.execute(opcode);
             assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
+            if let Some(file) = &mut self.dbg_log_file {
+                writeln!(
+                    file,
+                        "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
+                        self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3)
+                )
+                .unwrap();
+            }
 
             self.mmu.step(t_cycles);
 
@@ -737,17 +751,22 @@ mod test {
     #[test]
     fn test_debug_rom() {
         let file = std::fs::File::create("out.txt").unwrap();
-        let file = BufWriter::new(file);
+        eprintln!("Writing to file: {:?}", file);
+        let file = BufWriter::with_capacity(1, file);
+        // let file = BufWriter::new(file);
         let test_rom =
-            // include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/02-interrupts.gb");
-            // include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb");
-            include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/11-op a,(hl).gb");
+            include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/02-interrupts.gb");
+        // include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb");
+        // include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/11-op a,(hl).gb");
         let mut cpu = Cpu::_debug_mode(test_rom, file);
         let mut line = 1;
         loop {
             println!("L: {}", line);
             line += 1;
             cpu.step();
+            // if line == 152040 {
+            //     break;
+            // }
         }
     }
 }

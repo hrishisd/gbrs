@@ -896,7 +896,7 @@ impl Cpu {
     /// JP n16
     pub fn jp_n16(&mut self) -> u8 {
         let addr = self.fetch_imm16();
-        println!("Jumping to {addr:#X}");
+        // println!("Jumping to {addr:#X}");
         self.regs.pc = addr;
         16
     }
@@ -1087,7 +1087,7 @@ impl Cpu {
     }
 
     pub fn halt(&mut self) -> u8 {
-        // TODO: understand and implement the halt bug
+        // understand and implement the halt bug
         self.is_halted = true;
         4
     }
@@ -1105,9 +1105,11 @@ impl Cpu {
         4
     }
 
-    pub fn stop(&self) -> u8 {
-        // TODO: implement this after figuring out power modes
-        todo!()
+    pub fn stop(&mut self) -> u8 {
+        // Stop must be followed by an additional byte that is ignored by the CPU
+        panic!("STOP")
+        // self.fetch_imm8();
+        // 4
     }
 }
 

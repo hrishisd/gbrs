@@ -1,6 +1,8 @@
 #![allow(unused)]
 
 use enumset::{EnumSet, EnumSetType};
+use proptest::sample::select;
+use sdl2::sys::SelectionNotify;
 
 use crate::ppu::{
     self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjColorPaletteIdx, ObjSize,
@@ -30,6 +32,7 @@ pub struct Mmu {
     timer: Timer,
     /// TODO: reset when executing STOP instruction and only begin ticking once stop mode ends
     divider: Timer,
+    joypad_select: JoypadSelect,
 }
 
 impl Mmu {
@@ -54,15 +57,45 @@ impl Mmu {
             ppu: Ppu::new(),
             interrupts_enabled: EnumSet::empty(),
             interrupts_requested: EnumSet::empty(),
-            timer: Timer::new(TimerFrequency::F4KiHz),
-            divider: Timer::new(TimerFrequency::F16KiHz),
-            boot_rom: boot_rom.clone(),
+            timer: Timer::disabled(TimerFrequency::F4KiHz),
+            divider: Timer::disabled(TimerFrequency::F16KiHz),
+            boot_rom: *boot_rom,
             in_boot_rom: true,
+            joypad_select: JoypadSelect::None,
+        }
+    }
+
+    pub fn _debug_mode(rom: &[u8]) -> Self {
+        let mut rom_bank_0 = [0; 0x4000];
+        let upto_idx = rom_bank_0.len().min(rom.len());
+        rom_bank_0[..upto_idx].copy_from_slice(&rom[..upto_idx]);
+
+        // TODO: initialize other rom banks
+        let mut rom_bank_n = [0; 0x4000];
+        if rom.len() > 0x4000 {
+            let n_bytes = rom_bank_n.len().min(rom.len() - 0x4000);
+            rom_bank_n[..n_bytes].copy_from_slice(&rom[0x4000..(0x4000 + n_bytes)]);
+        }
+        Mmu {
+            rom_bank_0,
+            rom_bank_n,
+            ext_ram: [0; 0x2000],
+            work_ram: [0; 0x2000],
+            high_ram: [0; 0x80],
+            ppu: Ppu::new(),
+            interrupts_enabled: EnumSet::empty(),
+            interrupts_requested: EnumSet::empty(),
+            timer: Timer::disabled(TimerFrequency::F4KiHz),
+            divider: Timer::enabled(TimerFrequency::F16KiHz),
+            boot_rom: [0; 256],
+            in_boot_rom: false,
+            joypad_select: JoypadSelect::None,
         }
     }
 
     pub fn step(&mut self, t_cycles: u8) {
         let overflowed = self.timer.update(t_cycles);
+        // println!("Timer: {:#?}, overflowed: {:#?}", self.timer, overflowed);
         if overflowed {
             self.interrupts_requested |= InterruptKind::Timer;
         }
@@ -110,8 +143,11 @@ impl Mmu {
             }
             // io registers
             0xFF00 => {
-                // joypad input
-                todo!("implement joypad input")
+                // If a button is pressed, the corresponding bit is 0, not 1!
+                let (select_hi, select_lo) = self.joypad_select.to_be_bits();
+                // If neither buttons nor d-pad is selected ($30 was written), then the low nibble reads $F (all buttons released).
+                // TODO: handle actual joypad input
+                u8::from_bits([true, true, select_hi, select_lo, true, true, true, true])
             }
             0xFF01 | 0xFF02 => 0, // TODO: serial
             0xFF04 => self.divider.value,
@@ -189,10 +225,12 @@ impl Mmu {
             0xFF4A => self.ppu.window_top_left.y,
             0xFF4B => self.ppu.window_top_left.x,
             0xFF4D => {
-                todo!("CGB mode only, prepare speed switch")
+                // todo!("CGB mode only, prepare speed switch")
+                0xFF
             }
             0xFF4F => {
-                todo!("CGB mode only, VRAM bank select")
+                // todo!("CGB mode only, VRAM bank select")
+                0xFF
             }
             0xFF50 => {
                 // set to non-zero to disable boot ROM
@@ -200,13 +238,16 @@ impl Mmu {
             }
             0xFF51..=0xFF55 => {
                 // VRAM DMA
-                todo!("CGB mode only, LCD VRAM DMA transfers")
+                // todo!("CGB mode only, LCD VRAM DMA transfers")
+                0xFF
             }
             0xFF68..=0xFF6B => {
-                todo!("CGB only, BG/OBJ Palettes")
+                // todo!("CGB only, BG/OBJ Palettes")
+                0xFF
             }
             0xFF70 => {
-                todo!("CGB mode only, WRAM Bank select")
+                // todo!("CGB mode only, WRAM Bank select")
+                0xFF
             }
             // high ram?
             0xFF80..=0xFFFE => self.high_ram[addr as usize - 0xFF80],
@@ -280,7 +321,9 @@ impl Mmu {
             // io registers
             0xFF00 => {
                 // joypad input
-                todo!()
+                let [_, _, select_hi, select_lo, _, _, _, _] = byte.bits();
+                let joypad_select = JoypadSelect::from_be_bits(select_hi, select_lo);
+                self.joypad_select = joypad_select;
             }
             0xFF01 | 0xFF02 => {
                 // serial transfer
@@ -297,13 +340,12 @@ impl Mmu {
             }
             0xFF07 => {
                 // TAC timer control
-                // byte.as_bits()
                 let [.., enable, clock_select_1, clock_select_0] = byte.bits();
                 let frequency = match [clock_select_1, clock_select_0] {
                     [false, false] => TimerFrequency::F4KiHz,
-                    [false, true] => TimerFrequency::F16KiHz,
+                    [false, true] => TimerFrequency::F256KiHz,
                     [true, false] => TimerFrequency::F64KiHz,
-                    [true, true] => TimerFrequency::F256KiHz,
+                    [true, true] => TimerFrequency::F16KiHz,
                 };
                 self.timer.enabled = enable;
                 self.timer.frequency = frequency;
@@ -314,7 +356,7 @@ impl Mmu {
             }
             0xFF30..=0xFF3F => {
                 // wave pattern
-                todo!();
+                // TODO implement audio
             }
             // LCD control
             0xFF40 => {
@@ -346,7 +388,6 @@ impl Mmu {
                     mode_2_int_select,
                     mode_1_int_select,
                     mode_0_int_select,
-                    ..self.ppu.lcd_status
                 }
             }
             // Background viewport position
@@ -357,7 +398,7 @@ impl Mmu {
                 self.ppu.bg_viewport_offset.x = byte;
             }
             0xFF44 => {
-                panic!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
+                eprintln!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
             }
             0xFF45 => {
                 self.ppu.lyc = byte;
@@ -380,10 +421,10 @@ impl Mmu {
             0xFF4A => self.ppu.window_top_left.y = byte,
             0xFF4B => self.ppu.window_top_left.x = byte,
             0xFF4D => {
-                todo!("CGB mode only, prepare speed switch")
+                // todo!("CGB mode only, prepare speed switch")
             }
             0xFF4F => {
-                todo!("CGB mode only, VRAM bank select")
+                // todo!("CGB mode only, VRAM bank select")
             }
             0xFF50 => {
                 // set to non-zero to disable boot ROM
@@ -392,16 +433,22 @@ impl Mmu {
                 }
             }
             0xFF51..=0xFF55 => {
-                // VRAM DMA
-                todo!()
+                // TODO VRAM DMA (CDB mode only)
             }
             0xFF68..=0xFF6B => {
-                // BG / OBJ palettes
-                todo!();
+                // TODO: BG / OBJ palettes (CGB mode only)
+            }
+            0xFF6A => {
+                // Obj color palette spec (CGB mode only)
+            }
+            0xFF6B => {
+                // Obj color palette data (CGB mode only)
+            }
+            0xFF6C => {
+                // Obj priority mode (CGB mode only)
             }
             0xFF70 => {
-                // WRAM bank select
-                todo!();
+                // WRAM bank select (CGB only)
             }
             // high ram, used by LDH instructions
             0xFF80..=0xFFFE => {
@@ -409,7 +456,7 @@ impl Mmu {
             }
             // interrupt enable register
             0xFFFF => self.interrupts_enabled = EnumSet::<InterruptKind>::from_u8_truncated(byte),
-            _ => panic!("BUG: unhandled register write for addr: {addr:X}"),
+            _ => eprintln!("unhandled register write for addr: {addr:X}"),
         }
     }
 
@@ -430,6 +477,31 @@ pub enum InterruptKind {
     Timer = 2,
     Serial = 3,
     Joypad = 4,
+}
+
+/// Configures whether the joypad register returns the state of the buttons or the direction keys.
+enum JoypadSelect {
+    Buttons,
+    DPad,
+    None,
+}
+
+impl JoypadSelect {
+    fn from_be_bits(hi: bool, lo: bool) -> Self {
+        match (hi, lo) {
+            (false, false) => panic!("Can't select buttons and dpad at the same time"),
+            (false, true) => JoypadSelect::Buttons,
+            (true, false) => JoypadSelect::DPad,
+            (true, true) => JoypadSelect::None,
+        }
+    }
+    fn to_be_bits(&self) -> (bool, bool) {
+        match self {
+            JoypadSelect::Buttons => (false, true),
+            JoypadSelect::DPad => (true, false),
+            JoypadSelect::None => (true, true),
+        }
+    }
 }
 
 #[cfg(test)]
