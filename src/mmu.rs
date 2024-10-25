@@ -36,7 +36,7 @@ pub struct Mmu {
 }
 
 impl Mmu {
-    pub fn create(rom: &[u8]) -> Self {
+    pub fn new(rom: &[u8]) -> Self {
         let boot_rom = include_bytes!("../roms/dmg_boot.bin");
         let mut rom_bank_0 = [0; 0x4000];
         let upto_idx = rom_bank_0.len().min(rom.len());
@@ -58,38 +58,17 @@ impl Mmu {
             interrupts_enabled: EnumSet::empty(),
             interrupts_requested: EnumSet::empty(),
             timer: Timer::disabled(TimerFrequency::F4KiHz),
-            divider: Timer::disabled(TimerFrequency::F16KiHz),
+            divider: Timer::enabled(TimerFrequency::F16KiHz),
             boot_rom: *boot_rom,
             in_boot_rom: true,
             joypad_select: JoypadSelect::None,
         }
     }
 
-    pub fn _debug_mode(rom: &[u8]) -> Self {
-        let mut rom_bank_0 = [0; 0x4000];
-        let upto_idx = rom_bank_0.len().min(rom.len());
-        rom_bank_0[..upto_idx].copy_from_slice(&rom[..upto_idx]);
-
-        // TODO: initialize other rom banks
-        let mut rom_bank_n = [0; 0x4000];
-        if rom.len() > 0x4000 {
-            let n_bytes = rom_bank_n.len().min(rom.len() - 0x4000);
-            rom_bank_n[..n_bytes].copy_from_slice(&rom[0x4000..(0x4000 + n_bytes)]);
-        }
+    pub fn new_post_boot(rom: &[u8]) -> Self {
         Mmu {
-            rom_bank_0,
-            rom_bank_n,
-            ext_ram: [0; 0x2000],
-            work_ram: [0; 0x2000],
-            high_ram: [0; 0x80],
-            ppu: Ppu::new(),
-            interrupts_enabled: EnumSet::empty(),
-            interrupts_requested: EnumSet::empty(),
-            timer: Timer::disabled(TimerFrequency::F4KiHz),
-            divider: Timer::enabled(TimerFrequency::F16KiHz),
-            boot_rom: [0; 256],
             in_boot_rom: false,
-            joypad_select: JoypadSelect::None,
+            ..Mmu::new(rom)
         }
     }
 
@@ -272,9 +251,9 @@ impl Mmu {
         // println!("MMU: Write byte {:#X}: {:#X}", addr, byte);
         match addr {
             // ROM bank 0
-            0x0000..=0x3FFF => self.rom_bank_0[addr as usize] = byte,
+            0x0000..=0x3FFF => {}
             // ROM bank 01-NN
-            0x4000..=0x7FFF => self.rom_bank_n[(addr & 0x3FFF) as usize] = byte,
+            0x4000..=0x7FFF => {}
             // VRAM
             0x8000..=0x9FFF => {
                 self.ppu.write_vram_byte(addr, byte);
@@ -435,7 +414,7 @@ impl Mmu {
             0xFF51..=0xFF55 => {
                 // TODO VRAM DMA (CDB mode only)
             }
-            0xFF68..=0xFF6B => {
+            0xFF68..=0xFF69 => {
                 // TODO: BG / OBJ palettes (CGB mode only)
             }
             0xFF6A => {
@@ -528,7 +507,7 @@ mod tests {
     #[test]
     fn oam_memory_rw() {
         let empty_arr = [];
-        let mut mmu = Mmu::create(&empty_arr);
+        let mut mmu = Mmu::new(&empty_arr);
         for addr in 0xFE00..=0xFe9F {
             assert_eq!(mmu.read_byte(addr), 0);
         }

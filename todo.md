@@ -9,9 +9,13 @@
 - [x] implement rendering window
 - [x] implement sdl2 frontend (testing)
 - [x] unmap bootrom (set ff50 to nonzero value)
-- [ ] implement terminal frontend
+- [x] wrap in CLI and configure logging and framerate
+- [x] implement the HALT instruction
+- [ ] implement input handling
+- [ ] implement the HALT bug
+- [ ] Do a big refactor/cleanup with a single Emulator struct that owns all
+  subcomponents, with subcomponents having references to eachother
 - [ ] support rom banking
 - [ ] double check interrupt handling
-- [ ] implement the HALT instruction
-- [ ] wrap in CLI and configure logging and framerate
 - [ ] implement the STOP instruction properly
+- [ ] implement terminal frontend
