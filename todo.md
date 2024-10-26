@@ -11,11 +11,10 @@
 - [x] unmap bootrom (set ff50 to nonzero value)
 - [x] wrap in CLI and configure logging and framerate
 - [x] implement the HALT instruction
-- [ ] implement input handling
-- [ ] implement the HALT bug
-- [ ] Do a big refactor/cleanup with a single Emulator struct that owns all
-  subcomponents, with subcomponents having references to eachother
+- [x] implement input handling
 - [ ] support rom banking
+- [ ] Do a big refactor/cleanup 
+- [ ] implement the HALT bug
 - [ ] double check interrupt handling
 - [ ] implement the STOP instruction properly
 - [ ] implement terminal frontend

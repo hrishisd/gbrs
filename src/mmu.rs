@@ -4,6 +4,7 @@ use enumset::{EnumSet, EnumSetType};
 use proptest::sample::select;
 use sdl2::sys::SelectionNotify;
 
+use crate::joypad;
 use crate::ppu::{
     self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjColorPaletteIdx, ObjSize,
     ObjectAttributes, Ppu, Priority, TileMapArea,
@@ -11,6 +12,7 @@ use crate::ppu::{
 use crate::timer::{Timer, TimerFrequency};
 use crate::util::U8Ext;
 use core::panic;
+use joypad::Button;
 use std::{cmp::min, slice};
 pub struct Mmu {
     rom_bank_0: [u8; 0x4000],
@@ -33,6 +35,7 @@ pub struct Mmu {
     /// TODO: reset when executing STOP instruction and only begin ticking once stop mode ends
     divider: Timer,
     joypad_select: JoypadSelect,
+    pub pressed_buttons: EnumSet<joypad::Button>,
 }
 
 impl Mmu {
@@ -62,6 +65,7 @@ impl Mmu {
             boot_rom: *boot_rom,
             in_boot_rom: true,
             joypad_select: JoypadSelect::None,
+            pressed_buttons: EnumSet::empty(),
         }
     }
 
@@ -122,11 +126,35 @@ impl Mmu {
             }
             // io registers
             0xFF00 => {
-                // If a button is pressed, the corresponding bit is 0, not 1!
                 let (select_hi, select_lo) = self.joypad_select.to_be_bits();
-                // If neither buttons nor d-pad is selected ($30 was written), then the low nibble reads $F (all buttons released).
-                // TODO: handle actual joypad input
-                u8::from_bits([true, true, select_hi, select_lo, true, true, true, true])
+                // If a button is pressed, the corresponding bit is 0, not 1!
+                let btn_state = |button: Button| !self.pressed_buttons.contains(button);
+                match self.joypad_select {
+                    JoypadSelect::Buttons => u8::from_bits([
+                        true,
+                        true,
+                        select_hi,
+                        select_lo,
+                        btn_state(Button::Start),
+                        btn_state(Button::Select),
+                        btn_state(Button::B),
+                        btn_state(Button::A),
+                    ]),
+                    JoypadSelect::DPad => u8::from_bits([
+                        true,
+                        true,
+                        select_hi,
+                        select_lo,
+                        btn_state(Button::Down),
+                        btn_state(Button::Up),
+                        btn_state(Button::Left),
+                        btn_state(Button::Right),
+                    ]),
+                    // If neither buttons nor d-pad is selected ($30 was written), then the low nibble reads $F (all buttons released).
+                    JoypadSelect::None => {
+                        u8::from_bits([true, true, true, true, true, true, true, true])
+                    }
+                }
             }
             0xFF01 | 0xFF02 => 0, // TODO: serial
             0xFF04 => self.divider.value,

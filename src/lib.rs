@@ -2,6 +2,7 @@
 #![feature(assert_matches)]
 #![feature(generic_const_exprs)]
 pub mod cpu;
+pub mod joypad;
 mod mmu;
 mod ppu;
 mod timer;
