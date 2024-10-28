@@ -337,7 +337,7 @@ impl Ppu {
                     // the index of this pixel in the lcd line
                     let lcd_idx = obj_lcd_x_pos + pixel_color_idx as i16;
                     let is_transparent = *pixel_color_id == ColorId::Id0;
-                    if (0..160).contains(&lcd_idx) && 
+                    if (0..160).contains(&lcd_idx) &&
                         !is_transparent
                         // check should render over background
                         && (obj.priority == Priority::Zero
@@ -389,6 +389,124 @@ impl Ppu {
     /// This condition should be checked every time the current line is updated.
     fn should_trigger_lyc_interrupt(&self) -> bool {
         self.lcd_status.lyc_int_select && self.lyc == self.line
+    }
+
+    /// Construct a 256x256 grid of colors based on the ppu's background tile map and color palette.
+    /// This returns the entire background, ignoring the viewport and viewport offset.
+    /// This function ignores the background window enable bit.
+    pub fn dbg_resolve_background(&self) -> [[Color; 256]; 256] {
+        let mut background = [[Color::Black; 256]; 256];
+
+        // Get the correct tile map based on bg_tile_map_select
+        let tile_map = match self.bg_tile_map_select {
+            TileMapArea::X9800 => &self.lo_tile_map,
+            TileMapArea::X9C00 => &self.hi_tile_map,
+        };
+
+        // Iterate through each tile position in the 32x32 tile map
+        for tile_y in 0..32 {
+            for tile_x in 0..32 {
+                // Get the tile index from the map
+                let tile_idx = tile_map.tile_indices[tile_y][tile_x];
+
+                // Get the actual tile based on bg_and_window_tile_data_select
+                let tile = match self.bg_and_window_tile_data_select {
+                    BgAndWindowTileDataArea::X8000 => {
+                        self.vram_tile_data.get_tile_from_0x8000(tile_idx)
+                    }
+                    BgAndWindowTileDataArea::X8800 => {
+                        self.vram_tile_data.get_tile_from_0x8800_signed(tile_idx)
+                    }
+                };
+
+                // Each tile is 8x8 pixels
+                // Calculate the starting pixel position in the background
+                let start_x = tile_x * 8;
+                let start_y = tile_y * 8;
+
+                // Copy each pixel from the tile to the background
+                for (line_idx, line) in tile.lines.iter().enumerate() {
+                    for (pixel_idx, color_id) in line.color_ids.iter().enumerate() {
+                        let bg_x = start_x + pixel_idx;
+                        let bg_y = start_y + line_idx;
+                        background[bg_y][bg_x] = self.bg_color_palette.lookup(*color_id);
+                    }
+                }
+            }
+        }
+
+        // Draw viewport frame
+        let viewport_x = self.bg_viewport_offset.x as usize;
+        let viewport_y = self.bg_viewport_offset.y as usize;
+
+        // Draw horizontal lines of the viewport frame
+        for x in viewport_x..viewport_x.saturating_add(160) {
+            if x < 256 {
+                if viewport_y < 256 {
+                    background[viewport_y][x] = Color::Black;
+                }
+                if viewport_y + 144 < 256 {
+                    background[viewport_y + 144][x] = Color::Black;
+                }
+            }
+        }
+
+        // Draw vertical lines of the viewport frame
+        for y in viewport_y..viewport_y.saturating_add(144) {
+            if y < 256 {
+                if viewport_x < 256 {
+                    background[y][viewport_x] = Color::Black;
+                }
+                if viewport_x + 160 < 256 {
+                    background[y][viewport_x + 160] = Color::Black;
+                }
+            }
+        }
+
+        background
+    }
+
+    pub fn dbg_resolve_window(&self) -> [[Color; 256]; 256] {
+        let mut window = [[Color::Black; 256]; 256];
+
+        // Get the correct tile map based on window_tile_map_select
+        let tile_map = match self.window_tile_map_select {
+            TileMapArea::X9800 => &self.lo_tile_map,
+            TileMapArea::X9C00 => &self.hi_tile_map,
+        };
+
+        // Iterate through each tile position in the 32x32 tile map
+        for tile_y in 0..32 {
+            for tile_x in 0..32 {
+                // Get the tile index from the map
+                let tile_idx = tile_map.tile_indices[tile_y][tile_x];
+
+                // Get the actual tile based on bg_and_window_tile_data_select
+                let tile = match self.bg_and_window_tile_data_select {
+                    BgAndWindowTileDataArea::X8000 => {
+                        self.vram_tile_data.get_tile_from_0x8000(tile_idx)
+                    }
+                    BgAndWindowTileDataArea::X8800 => {
+                        self.vram_tile_data.get_tile_from_0x8800_signed(tile_idx)
+                    }
+                };
+
+                // Each tile is 8x8 pixels
+                // Calculate the starting pixel position in the window
+                let start_x = tile_x * 8;
+                let start_y = tile_y * 8;
+
+                // Copy each pixel from the tile to the window
+                for (line_idx, line) in tile.lines.iter().enumerate() {
+                    for (pixel_idx, color_id) in line.color_ids.iter().enumerate() {
+                        let window_x = start_x + pixel_idx;
+                        let window_y = start_y + line_idx;
+                        window[window_y][window_x] = self.bg_color_palette.lookup(*color_id);
+                    }
+                }
+            }
+        }
+        window
     }
 }
 
@@ -458,7 +576,7 @@ pub struct Coord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileMap {
-    tile_indices: [[u8; 32]; 32],
+    pub tile_indices: [[u8; 32]; 32],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -561,7 +679,7 @@ impl Color {
 pub struct ColorPalette(Color, Color, Color, Color);
 
 impl ColorPalette {
-    fn lookup(&self, id: ColorId) -> Color {
+    pub fn lookup(&self, id: ColorId) -> Color {
         match id {
             ColorId::Id0 => self.0,
             ColorId::Id1 => self.1,
@@ -620,7 +738,7 @@ impl VRamTileData {
     /// idx 0 to 127 gets from block 0
     ///
     /// idx 128 to 255 gets from block 1
-    fn get_tile_from_0x8000(&self, idx: u8) -> Tile {
+    pub fn get_tile_from_0x8000(&self, idx: u8) -> Tile {
         if idx < 128 {
             self.tile_data_blocks[0][idx as usize]
         } else {
@@ -633,7 +751,7 @@ impl VRamTileData {
     /// idx 0 to 127 searches within block 2
     ///
     /// idx -1 to -128 searches within block 1
-    fn get_tile_from_0x8800_signed(&self, idx: u8) -> Tile {
+    pub fn get_tile_from_0x8800_signed(&self, idx: u8) -> Tile {
         let idx = idx as i8;
         if idx >= 0 {
             self.tile_data_blocks[2][idx as usize]
@@ -644,9 +762,9 @@ impl VRamTileData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Tile {
+pub struct Tile {
     /// `lines[0]` is the top-line
-    lines: [TileLine; 8],
+    pub lines: [TileLine; 8],
 }
 
 impl Tile {
@@ -676,11 +794,11 @@ struct LineBytes {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TileLine {
-    /// The color_ids of the pixels from left to right  
+pub struct TileLine {
+    /// The color_ids of the pixels from left to right
     ///
     /// idx 0 represents the left-most pixel, idx 7 is the right-most pixel
-    color_ids: [ColorId; 8],
+    pub color_ids: [ColorId; 8],
 }
 
 impl TileLine {
@@ -728,7 +846,7 @@ impl TileLine {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ColorId {
+pub enum ColorId {
     Id0,
     Id1,
     Id2,

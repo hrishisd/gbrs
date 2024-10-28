@@ -1,6 +1,6 @@
 ## basic functionality
 
-- [x] implement OAM 
+- [x] implement OAM
 - [x] implement OAM DMA transfer
 - [x] implement lyc compare interrupt
 - [x] implement rendering background
@@ -12,8 +12,10 @@
 - [x] wrap in CLI and configure logging and framerate
 - [x] implement the HALT instruction
 - [x] implement input handling
+- [ ] [pass json tests](https://discord.com/channels/465585922579103744/465586075830845475/1300513715623428137)
+- [ ] pass dmg-acid2 ppu tests
 - [ ] support rom banking
-- [ ] Do a big refactor/cleanup 
+- [ ] Do a big refactor/cleanup
 - [ ] implement the HALT bug
 - [ ] double check interrupt handling
 - [ ] implement the STOP instruction properly

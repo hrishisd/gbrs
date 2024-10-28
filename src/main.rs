@@ -47,6 +47,14 @@ struct Cli {
     #[arg(long, default_value = "false")]
     skip_boot: bool,
 
+    /// Show the gameboy ppu window state in a separate window for debugging
+    #[arg(long, default_value = "false")]
+    show_window: bool,
+
+    /// Render gameboy ppu background state in a separate window for debugging
+    #[arg(long, default_value = "false")]
+    show_bg: bool,
+
     /// Vertical and horizontal scaling for the gameboy display
     #[arg(long, default_value = "4")]
     scale: u8,
@@ -87,50 +95,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_pump = sdl_context.event_pump()?;
     let texture_creator = canvas.texture_creator();
     let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, 160, 144)?;
-    execute_rom(cpu, event_pump, canvas, texture, !args.no_sleep)
-}
 
-fn keycode_to_button(key: Keycode) -> Option<joypad::Button> {
-    match key {
-        Keycode::X => Some(joypad::Button::A),
-        Keycode::Z => Some(joypad::Button::B),
-        Keycode::Return => Some(joypad::Button::Start),
-        Keycode::RShift => Some(joypad::Button::Select),
-        Keycode::Up => Some(joypad::Button::Up),
-        Keycode::Down => Some(joypad::Button::Down),
-        Keycode::Left => Some(joypad::Button::Left),
-        Keycode::Right => Some(joypad::Button::Right),
-        _ => None,
-    }
-}
+    // bg layer
+    let bg_canvas_and_texture = if args.show_bg {
+        let window = video_subsystem
+            .window("Background Debug View", 512, 512)
+            .position(0, 0)
+            .build()?;
+        let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        let texture_creator = Box::new(canvas.texture_creator());
+        let texture_creator = Box::leak(texture_creator);
+        let texture = texture_creator.create_texture_streaming(
+            sdl2::pixels::PixelFormatEnum::RGB24,
+            256,
+            256,
+        )?;
+        Some((canvas, texture))
+    } else {
+        None
+    };
 
-fn _color_to_sdl_buf_values_grey_scale(color: Color) -> [u8; 3] {
-    match color {
-        Color::White => [255, 255, 255],
-        Color::LightGray => [192, 192, 192],
-        Color::DarkGray => [96, 96, 96],
-        Color::Black => [0, 0, 0],
-    }
-}
+    // window layer
+    let window_canvas_and_texture = if args.show_window {
+        let window = video_subsystem
+            .window("Window Debug View", 512, 512)
+            .position(0, 0)
+            .build()?;
+        let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        let texture_creator = Box::new(canvas.texture_creator());
+        let texture_creator = Box::leak(texture_creator);
+        let texture = texture_creator
+            .create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24, 256, 256)
+            .map_err(|e| e.to_string())?;
+        Some((canvas, texture))
+    } else {
+        None
+    };
 
-fn _color_to_sdl_buf_values_green_scale(color: Color) -> [u8; 3] {
-    match color {
-        Color::White => [155, 188, 15],
-        Color::LightGray => [139, 172, 15],
-        Color::DarkGray => [48, 98, 48],
-        Color::Black => [15, 56, 15],
-    }
+    execute_rom(
+        cpu,
+        event_pump,
+        canvas,
+        texture,
+        bg_canvas_and_texture,
+        window_canvas_and_texture,
+        !args.no_sleep,
+    )
 }
 
 fn execute_rom(
     mut cpu: cpu::Cpu,
     mut event_pump: sdl2::EventPump,
-    mut canvas: sdl2::render::Canvas<sdl2::video::Window>,
-    mut texture: sdl2::render::Texture,
+    mut lcd_canvas: sdl2::render::Canvas<sdl2::video::Window>,
+    mut lcd_texture: sdl2::render::Texture,
+    mut background_canvas_and_texture: Option<(
+        sdl2::render::Canvas<sdl2::video::Window>,
+        sdl2::render::Texture,
+    )>,
+    mut window_canvas_and_texture: Option<(
+        sdl2::render::Canvas<sdl2::video::Window>,
+        sdl2::render::Texture,
+    )>,
     should_sleep: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut prev_pressed_buttons = EnumSet::<joypad::Button>::empty();
     let mut pressed_buttons = EnumSet::<joypad::Button>::empty();
+
     loop {
         let frame_start = std::time::Instant::now();
         // Handle events
@@ -164,6 +194,7 @@ fn execute_rom(
         }
         cpu.mmu.pressed_buttons = pressed_buttons;
         prev_pressed_buttons = pressed_buttons;
+
         // Execute CPU cycles for one frame
         let mut cycles_in_frame: u32 = 0;
         while cycles_in_frame < CYCLES_PER_FRAME {
@@ -171,22 +202,58 @@ fn execute_rom(
             cycles_in_frame += cycles as u32;
         }
 
-        // Update the texture with the lcd_display data
-        // then copy the texture to the canvas and present it
-        texture
+        // Update main LCD display texture
+        lcd_texture
             .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
                 for (y, row) in cpu.mmu.ppu.lcd_display.iter().enumerate() {
                     for (x, &color) in row.iter().enumerate() {
                         let offset = (y * 160 + x) * 3;
-                        let sdl_color = _color_to_sdl_buf_values_green_scale(color);
+                        let sdl_color = color_to_sdl_buf_values_dmg(color);
                         buffer[offset..offset + 3].copy_from_slice(&sdl_color);
                     }
                 }
             })
             .map_err(|e| e.to_string())?;
-        canvas.clear();
-        canvas.copy(&texture, None, None)?;
-        canvas.present();
+
+        // Update background texture
+        if let Some((ref mut canvas, ref mut texture)) = background_canvas_and_texture {
+            let background = cpu.mmu.ppu.dbg_resolve_background();
+            texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+                for (y, row) in background.iter().enumerate() {
+                    for (x, &color) in row.iter().enumerate() {
+                        let offset = (y * 256 + x) * 3;
+                        let sdl_color = color_to_sdl_buf_values_dmg(color);
+                        buffer[offset..offset + 3].copy_from_slice(&sdl_color);
+                    }
+                }
+            })?;
+            canvas.clear();
+            canvas.copy(&texture, None, None)?;
+            canvas.present();
+        }
+
+        // update window teture
+        if let Some((ref mut canvas, ref mut texture)) = window_canvas_and_texture {
+            // Update window texture
+            let window_data = cpu.mmu.ppu.dbg_resolve_window();
+            texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+                for (y, row) in window_data.iter().enumerate() {
+                    for (x, &color) in row.iter().enumerate() {
+                        let offset = (y * 256 + x) * 3;
+                        let sdl_color = color_to_sdl_buf_values_dmg(color);
+                        buffer[offset..offset + 3].copy_from_slice(&sdl_color);
+                    }
+                }
+            })?;
+            canvas.clear();
+            canvas.copy(&texture, None, None)?;
+            canvas.present();
+        }
+
+        // Render main LCD display
+        lcd_canvas.clear();
+        lcd_canvas.copy(&lcd_texture, None, None)?;
+        lcd_canvas.present();
 
         // Sleep to maintain frame rate, if requested
         if should_sleep {
@@ -194,6 +261,30 @@ fn execute_rom(
             if let Some(frame_remaining_duration) = FRAME_DURATION.checked_sub(frame_duration) {
                 thread::sleep(frame_remaining_duration);
             }
+        }
+    }
+
+    fn keycode_to_button(key: Keycode) -> Option<joypad::Button> {
+        match key {
+            Keycode::X => Some(joypad::Button::A),
+            Keycode::Z => Some(joypad::Button::B),
+            Keycode::Return => Some(joypad::Button::Start),
+            Keycode::RShift => Some(joypad::Button::Select),
+            Keycode::Up => Some(joypad::Button::Up),
+            Keycode::Down => Some(joypad::Button::Down),
+            Keycode::Left => Some(joypad::Button::Left),
+            Keycode::Right => Some(joypad::Button::Right),
+            _ => None,
+        }
+    }
+
+    /// Original" Game Boy green (more authentic)
+    fn color_to_sdl_buf_values_dmg(color: Color) -> [u8; 3] {
+        match color {
+            Color::White => [224, 248, 208],
+            Color::LightGray => [136, 192, 112],
+            Color::DarkGray => [52, 104, 86],
+            Color::Black => [8, 24, 32],
         }
     }
 }

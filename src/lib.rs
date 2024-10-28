@@ -4,7 +4,7 @@
 pub mod cpu;
 pub mod joypad;
 mod mmu;
-mod ppu;
+pub mod ppu;
 mod timer;
 mod util;
 pub use ppu::Color;
