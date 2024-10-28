@@ -15,7 +15,7 @@ use gbrs::{cpu, joypad};
 /// CPU frequency from pandocs: https://gbdev.io/pandocs/Specifications.html#dmg_clk
 const CYCLES_PER_SECOND: u32 = 4194304;
 const SPEED_MOD: u32 = 1;
-const FPS: u32 = 120;
+const FPS: u32 = 60;
 const CYCLES_PER_FRAME: u32 = SPEED_MOD * CYCLES_PER_SECOND / FPS;
 const NANOS_PER_FRAME: u64 = 1_000_000_000 / FPS as u64;
 const FRAME_DURATION: time::Duration = time::Duration::from_nanos(NANOS_PER_FRAME);
@@ -46,10 +46,17 @@ struct Cli {
     /// Initialize the CPU as if the boot ROM executed successfully
     #[arg(long, default_value = "false")]
     skip_boot: bool,
+
+    /// Vertical and horizontal scaling for the gameboy display
+    #[arg(long, default_value = "4")]
+    scale: u8,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
+    if args.scale == 0 {
+        return Err("scale value must be > 0".into());
+    }
     let rom = std::fs::read(args.rom)?;
     let log_file = if let Some(log_file) = args.log_file {
         let log = std::fs::File::create(log_file)?;
@@ -66,13 +73,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
     let window = video_subsystem
-        .window("GB Emulator", 160 * 4, 144 * 4)
+        .window(
+            "GB Emulator",
+            160 * args.scale as u32,
+            144 * args.scale as u32,
+        )
         .position_centered()
         .build()
         .map_err(|e| e.to_string())?;
 
     let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-    canvas.set_scale(4.0, 4.0)?;
+    canvas.set_scale(args.scale as f32, args.scale as f32)?;
     let event_pump = sdl_context.event_pump()?;
     let texture_creator = canvas.texture_creator();
     let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, 160, 144)?;
