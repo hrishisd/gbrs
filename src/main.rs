@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn keycode_to_button(key: Keycode) -> Option<joypad::Button> {
     match key {
-        Keycode::A => Some(joypad::Button::A),
+        Keycode::X => Some(joypad::Button::A),
         Keycode::Z => Some(joypad::Button::B),
         Keycode::Return => Some(joypad::Button::Start),
         Keycode::RShift => Some(joypad::Button::Select),
