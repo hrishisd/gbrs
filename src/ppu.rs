@@ -451,7 +451,7 @@ impl Ppu {
             }
         }
 
-        // Draw vertical lines of the viewport frame
+        #[allow(clippy::needless_range_loop)]
         for y in viewport_y..viewport_y.saturating_add(144) {
             if y < 256 {
                 if viewport_x < 256 {
@@ -507,6 +507,67 @@ impl Ppu {
             }
         }
         window
+    }
+
+    /// Draw the objects in the object attribute memory as a grid of pixels
+    /// The objects appear on their own grid.
+    /// The 0,0 of the object grid corresponds to -8, -16 of the lcd coordinate system
+    pub fn dbg_resolve_objects(&self) -> [[Color; 176]; 176] {
+        let mut grid = [[Color::White; 176]; 176];
+        // an objects y position (obj.y_pos) is its position on the lcd screen + 16
+        // So for example
+        // Y=0 hides an object,
+        // Y=2 hides an 8×8 object but displays the last two rows of an 8×16 object,
+        // Y=16 displays an object at the top of the screen,
+        // Y=144 displays an 8×16 object aligned with the bottom of the screen,
+        // Y=152 displays an 8×8 object aligned with the bottom of the screen,
+        // Y=154 displays the first six rows of an object at the bottom of the screen,
+        // Y=160 hides an object.
+
+        // an objects x position (obj.x_pos) is its horizontal position on the lcd screen + 8
+        // an off screen value of x = 0 or x >= 168 hides the object
+        // todo handle tall objects
+        for obj in self.obj_attribute_memory {
+            let mut tile = self
+                .vram_tile_data
+                .get_tile_from_0x8000(obj.tile_idx)
+                .lines
+                .map(|line| line.color_ids);
+            if obj.x_flip {
+                for line in tile.iter_mut() {
+                    line.reverse();
+                }
+            }
+            if obj.y_flip {
+                tile.reverse();
+            }
+            for (y_offset, line) in tile.iter().enumerate() {
+                for (x_offset, color_id) in line.iter().enumerate() {
+                    let x = obj.x_pos as usize + x_offset;
+                    let y = obj.y_pos as usize + y_offset;
+                    // don't draw objects out of frame
+                    if x < 176 && y < 176 {
+                        let palette = self.obj_color_palettes[match obj.palette {
+                            ObjColorPaletteIdx::Zero => 0,
+                            ObjColorPaletteIdx::One => 1,
+                        }];
+                        let pixel = palette.lookup(*color_id);
+                        grid[y][x] = pixel;
+                    }
+                }
+            }
+        }
+        // draw vertical lines of lcd
+        for y in 16..=160 {
+            grid[y][8] = Color::Black;
+            grid[y][168] = Color::Black;
+        }
+        // draw horizontal lines of lcd
+        for x in 8..=168 {
+            grid[16][x] = Color::Black;
+            grid[160][x] = Color::Black;
+        }
+        grid
     }
 }
 

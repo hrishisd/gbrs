@@ -758,7 +758,7 @@ mod test {
         }
     }
 
-    // #[ignore]
+    #[ignore]
     #[test]
     fn test_debug_rom() {
         let file = std::fs::File::create("out.txt").unwrap();

@@ -55,6 +55,10 @@ struct Cli {
     #[arg(long, default_value = "false")]
     show_bg: bool,
 
+    /// Render gameboy object tiles in a separate window for debugging
+    #[arg(long, default_value = "false")]
+    show_obj_tiles: bool,
+
     /// Vertical and horizontal scaling for the gameboy display
     #[arg(long, default_value = "4")]
     scale: u8,
@@ -80,29 +84,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
-    let window = video_subsystem
-        .window(
-            "GB Emulator",
-            160 * args.scale as u32,
-            144 * args.scale as u32,
-        )
-        .position_centered()
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
-    canvas.set_scale(args.scale as f32, args.scale as f32)?;
-    let event_pump = sdl_context.event_pump()?;
-    let texture_creator = canvas.texture_creator();
-    let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, 160, 144)?;
-
     // bg layer
     let bg_canvas_and_texture = if args.show_bg {
         let window = video_subsystem
-            .window("Background Debug View", 512, 512)
+            .window(
+                "Background Debug View",
+                256 * args.scale as u32,
+                256 * args.scale as u32,
+            )
             .position(0, 0)
             .build()?;
-        let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        canvas.set_scale(args.scale as f32, args.scale as f32)?;
         let texture_creator = Box::new(canvas.texture_creator());
         let texture_creator = Box::leak(texture_creator);
         let texture = texture_creator.create_texture_streaming(
@@ -118,10 +111,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // window layer
     let window_canvas_and_texture = if args.show_window {
         let window = video_subsystem
-            .window("Window Debug View", 512, 512)
-            .position(0, 0)
+            .window(
+                "Window Debug View",
+                256 * args.scale as u32,
+                256 * args.scale as u32,
+            )
+            .position(512, 0)
             .build()?;
-        let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        canvas.set_scale(args.scale as f32, args.scale as f32)?;
         let texture_creator = Box::new(canvas.texture_creator());
         let texture_creator = Box::leak(texture_creator);
         let texture = texture_creator
@@ -132,6 +130,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // object tiles layer
+    let obj_canvas_and_texture = if args.show_obj_tiles {
+        let window = video_subsystem
+            .window(
+                "OAM Debug View",
+                176 * args.scale as u32,
+                176 * args.scale as u32,
+            )
+            .position(512, 100)
+            .build()?;
+        let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        canvas.set_scale(args.scale as f32, args.scale as f32)?;
+        let texture_creator = Box::new(canvas.texture_creator());
+        let texture_creator = Box::leak(texture_creator);
+        let texture = texture_creator.create_texture_streaming(
+            sdl2::pixels::PixelFormatEnum::RGB24,
+            176,
+            176,
+        )?;
+        Some((canvas, texture))
+    } else {
+        None
+    };
+
+    let window = video_subsystem
+        .window(
+            "GB Emulator",
+            160 * args.scale as u32,
+            144 * args.scale as u32,
+        )
+        .position_centered()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+    canvas.set_scale(args.scale as f32, args.scale as f32)?;
+    let event_pump = sdl_context.event_pump()?;
+    let texture_creator = canvas.texture_creator();
+    let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, 160, 144)?;
+
     execute_rom(
         cpu,
         event_pump,
@@ -139,6 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         texture,
         bg_canvas_and_texture,
         window_canvas_and_texture,
+        obj_canvas_and_texture,
         !args.no_sleep,
     )
 }
@@ -156,9 +194,12 @@ fn execute_rom(
         sdl2::render::Canvas<sdl2::video::Window>,
         sdl2::render::Texture,
     )>,
+    mut obj_canvas_and_texture: Option<(
+        sdl2::render::Canvas<sdl2::video::Window>,
+        sdl2::render::Texture,
+    )>,
     should_sleep: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut prev_pressed_buttons = EnumSet::<joypad::Button>::empty();
     let mut pressed_buttons = EnumSet::<joypad::Button>::empty();
 
     loop {
@@ -189,11 +230,10 @@ fn execute_rom(
             };
         }
 
-        if pressed_buttons != prev_pressed_buttons {
+        if pressed_buttons != cpu.mmu.pressed_buttons {
             eprintln!("{pressed_buttons:?}");
         }
         cpu.mmu.pressed_buttons = pressed_buttons;
-        prev_pressed_buttons = pressed_buttons;
 
         // Execute CPU cycles for one frame
         let mut cycles_in_frame: u32 = 0;
@@ -202,58 +242,53 @@ fn execute_rom(
             cycles_in_frame += cycles as u32;
         }
 
-        // Update main LCD display texture
-        lcd_texture
-            .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-                for (y, row) in cpu.mmu.ppu.lcd_display.iter().enumerate() {
-                    for (x, &color) in row.iter().enumerate() {
-                        let offset = (y * 160 + x) * 3;
-                        let sdl_color = color_to_sdl_buf_values_dmg(color);
-                        buffer[offset..offset + 3].copy_from_slice(&sdl_color);
-                    }
-                }
-            })
-            .map_err(|e| e.to_string())?;
-
         // Update background texture
         if let Some((ref mut canvas, ref mut texture)) = background_canvas_and_texture {
             let background = cpu.mmu.ppu.dbg_resolve_background();
             texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
                 for (y, row) in background.iter().enumerate() {
                     for (x, &color) in row.iter().enumerate() {
-                        let offset = (y * 256 + x) * 3;
+                        let offset = (y * background[0].len() + x) * 3;
                         let sdl_color = color_to_sdl_buf_values_dmg(color);
                         buffer[offset..offset + 3].copy_from_slice(&sdl_color);
                     }
                 }
             })?;
             canvas.clear();
-            canvas.copy(&texture, None, None)?;
+            canvas.copy(texture, None, None)?;
             canvas.present();
         }
 
-        // update window teture
-        if let Some((ref mut canvas, ref mut texture)) = window_canvas_and_texture {
-            // Update window texture
-            let window_data = cpu.mmu.ppu.dbg_resolve_window();
+        // Update OAM texture
+        if let Some((ref mut canvas, ref mut texture)) = obj_canvas_and_texture {
+            let oam_data = cpu.mmu.ppu.dbg_resolve_objects();
             texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-                for (y, row) in window_data.iter().enumerate() {
+                for (y, row) in oam_data.iter().enumerate() {
                     for (x, &color) in row.iter().enumerate() {
-                        let offset = (y * 256 + x) * 3;
+                        let offset = (y * oam_data[0].len() + x) * 3;
                         let sdl_color = color_to_sdl_buf_values_dmg(color);
                         buffer[offset..offset + 3].copy_from_slice(&sdl_color);
                     }
                 }
             })?;
             canvas.clear();
-            canvas.copy(&texture, None, None)?;
+            canvas.copy(texture, None, None)?;
             canvas.present();
         }
 
-        // Render main LCD display
-        lcd_canvas.clear();
-        lcd_canvas.copy(&lcd_texture, None, None)?;
-        lcd_canvas.present();
+        // update window texture
+        if let Some((ref mut canvas, ref mut texture)) = window_canvas_and_texture {
+            let window = cpu.mmu.ppu.dbg_resolve_window();
+            let window = window
+                .iter()
+                .map(|line| line.as_slice())
+                .collect::<Vec<_>>();
+            update_canvas(canvas, texture, &window)?;
+        }
+
+        let lcd = cpu.mmu.ppu.lcd_display;
+        let lcd: Vec<_> = lcd.iter().map(|line| line.as_slice()).collect();
+        update_canvas(&mut lcd_canvas, &mut lcd_texture, &lcd)?;
 
         // Sleep to maintain frame rate, if requested
         if should_sleep {
@@ -286,5 +321,25 @@ fn execute_rom(
             Color::DarkGray => [52, 104, 86],
             Color::Black => [8, 24, 32],
         }
+    }
+
+    fn update_canvas(
+        canvas: &mut sdl2::render::Canvas<sdl2::video::Window>,
+        texture: &mut sdl2::render::Texture,
+        image: &[&[Color]],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+            for (y, row) in image.iter().enumerate() {
+                for (x, &color) in row.iter().enumerate() {
+                    let offset = (y * image[0].len() + x) * 3;
+                    let sdl_color = color_to_sdl_buf_values_dmg(color);
+                    buffer[offset..offset + 3].copy_from_slice(&sdl_color);
+                }
+            }
+        })?;
+        canvas.clear();
+        canvas.copy(texture, None, None)?;
+        canvas.present();
+        Ok(())
     }
 }
