@@ -213,7 +213,7 @@ impl Cpu {
         let result = x.wrapping_sub(1);
         self.regs.set_flag(Z, result == 0);
         self.regs.set_flag(N, true);
-        self.regs.set_flag(H, x & 0x0F == 0);
+        self.regs.set_flag(H, (x & 0x0F) == 0);
         result
     }
 
@@ -923,7 +923,7 @@ impl Cpu {
     }
 
     /// JR cc,n16
-    pub fn jr_cc_n16(&mut self, cc: CC) -> u8 {
+    pub fn jr_cc_e8(&mut self, cc: CC) -> u8 {
         let offset = self.fetch_imm8() as i8;
         if self.check_cond(cc) {
             self.regs.pc = (self.regs.pc as i16 + offset as i16) as u16;
@@ -1107,8 +1107,8 @@ impl Cpu {
 
     pub fn stop(&mut self) -> u8 {
         // Stop must be followed by an additional byte that is ignored by the CPU
+        self.fetch_imm8();
         panic!("STOP")
-        // self.fetch_imm8();
         // 4
     }
 }

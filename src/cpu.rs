@@ -453,10 +453,10 @@ impl Cpu {
             // --- Jumps/calls ---
             // relative jump
             0x18 => self.jr_e8(),
-            0x20 => self.jr_cc_n16(CC::NZ),
-            0x30 => self.jr_cc_n16(CC::NC),
-            0x28 => self.jr_cc_n16(CC::Z),
-            0x38 => self.jr_cc_n16(CC::C),
+            0x20 => self.jr_cc_e8(CC::NZ),
+            0x30 => self.jr_cc_e8(CC::NC),
+            0x28 => self.jr_cc_e8(CC::Z),
+            0x38 => self.jr_cc_e8(CC::C),
             // return
             0xC0 => self.ret_cc(CC::NZ),
             0xD0 => self.ret_cc(CC::NC),
