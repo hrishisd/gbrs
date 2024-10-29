@@ -918,7 +918,7 @@ impl Cpu {
     /// The address is encoded as a signed 8-bit offset from the address immediately following the JR instruction, so the target address n16 must be between -128 and 127 bytes away.
     pub fn jr_e8(&mut self) -> u8 {
         let offset = self.fetch_imm8() as i8;
-        self.regs.pc = (self.regs.pc as i16 + offset as i16) as u16;
+        self.regs.pc = (self.regs.pc as i16).wrapping_add(offset as i16) as u16;
         12
     }
 
@@ -1108,7 +1108,7 @@ impl Cpu {
     pub fn stop(&mut self) -> u8 {
         // Stop must be followed by an additional byte that is ignored by the CPU
         self.fetch_imm8();
-        panic!("STOP")
+        panic!("STOP");
         // 4
     }
 }
@@ -1134,7 +1134,7 @@ mod tests {
         // NOP
         // NOP
         let mut cpu = Cpu::new(&[0xFB, 0x00, 0x00], None, false);
-        cpu.mmu.in_boot_rom = false;
+        cpu.mmu.set_not_in_boot_rom();
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
         // ime should still be false
@@ -1155,7 +1155,7 @@ mod tests {
         // DI
         // NOP
         let mut cpu = Cpu::new(&[0xFB, 0xF3, 0x00], None, false);
-        cpu.mmu.in_boot_rom = false;
+        cpu.mmu.set_not_in_boot_rom();
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
         // ime should be pending

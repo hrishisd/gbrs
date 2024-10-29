@@ -7,7 +7,7 @@ use std::{
 use opcode::{RstVec, CC};
 use register_file::{Registers, R16, R8};
 
-use crate::mmu::{InterruptKind, Mmu};
+use crate::mmu::{InterruptKind, MemoryBus, Mmu};
 
 mod opcode;
 mod register_file;
@@ -22,7 +22,7 @@ enum ImeState {
 pub struct Cpu {
     // TODO: remove pub
     pub regs: Registers,
-    pub mmu: Mmu,
+    pub mmu: Box<dyn MemoryBus>,
     /// AKA, the `IME` flag.
     ///
     /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
@@ -36,7 +36,7 @@ impl Cpu {
     pub fn new(rom: &[u8], dbg_log_file: Option<BufWriter<File>>, print_cpu_logs: bool) -> Self {
         let mut cpu = Cpu {
             regs: Registers::create(),
-            mmu: Mmu::new(rom),
+            mmu: Box::new(Mmu::new(rom)),
             ime: ImeState::Disabled,
             dbg_log_file,
             is_halted: false,
@@ -65,7 +65,7 @@ impl Cpu {
                 sp: 0xFFFE,
                 pc: 0x0100,
             },
-            mmu: Mmu::new_post_boot(test_rom),
+            mmu: Box::new(Mmu::new_post_boot(test_rom)),
             ime: ImeState::Disabled,
             dbg_log_file,
             is_halted: false,
@@ -87,7 +87,7 @@ impl Cpu {
         if self.print_cpu_logs {
             println!(
                 "IME: {:?} HALTED: {:?}, IE: {:?}, IF: {:?}\nA:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-                self.ime, self.is_halted, self.mmu.interrupts_enabled, self.mmu.interrupts_requested, self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3));
+                self.ime, self.is_halted, self.mmu.interrupts_enabled(), self.mmu.interrupts_requested(), self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3));
         }
     }
 
@@ -100,19 +100,19 @@ impl Cpu {
         // TODO: check interrupt handling implementation against:
         //     http://www.codeslinger.co.uk/pages/projects/gameboy/interrupts.html
         // handle interrupts
-        // println!(
+        // eprintln!(
         //     "IME: {:?} HALTED: {:?}, IE: {:?}, IF: {:?}\nA:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-        //     self.ime, self.is_halted, self.mmu.interrupts_enabled, self.mmu.interrupts_requested, self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3));
+        //     self.ime, self.is_halted, self.mmu.interrupts_enabled(), self.mmu.interrupts_requested(), self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3));
         let mut handled_interrupt = false;
         if self.ime == ImeState::Enabled {
             use InterruptKind::*;
             for interrupt_kind in [Vblank, LcdStat, Serial, Timer, Joypad] {
-                if self.mmu.interrupts_requested.contains(interrupt_kind)
-                    && self.mmu.interrupts_enabled.contains(interrupt_kind)
+                if self.mmu.interrupts_requested().contains(interrupt_kind)
+                    && self.mmu.interrupts_enabled().contains(interrupt_kind)
                 {
                     self.ime = ImeState::Disabled;
                     self.is_halted = false;
-                    self.mmu.interrupts_requested.remove(interrupt_kind);
+                    self.mmu.clear_requested_interrupt(interrupt_kind);
                     self.push_u16(self.regs.pc);
                     self.regs.pc = match interrupt_kind {
                         Joypad => 0x60,
@@ -127,7 +127,8 @@ impl Cpu {
                 }
             }
         } else {
-            let pending_interrupts = self.mmu.interrupts_requested & self.mmu.interrupts_enabled;
+            let pending_interrupts =
+                self.mmu.interrupts_requested() & self.mmu.interrupts_enabled();
             if !pending_interrupts.is_empty() && self.is_halted {
                 self.is_halted = false;
             }
@@ -144,7 +145,7 @@ impl Cpu {
         } else {
             // execute opcode
             let opcode = self.mmu.read_byte(self.regs.pc);
-            self.regs.pc += 1;
+            self.regs.pc = self.regs.pc.wrapping_add(1);
             let t_cycles = self.execute(opcode);
             assert!(t_cycles % 4 == 0 && t_cycles <= 24, "Unexpected number of t-cycles during execution of opcode {opcode:x} execution: {t_cycles}");
             self.log_state();
@@ -176,7 +177,8 @@ impl Cpu {
             0xCB => {
                 // TODO remember to account for prefix instruction when counting cycles
                 let opcode = self.mmu.read_byte(self.regs.pc);
-                self.regs.pc += 1;
+                // self.regs.pc += 1;
+                self.regs.pc = self.regs.pc.wrapping_add(1);
                 match opcode {
                     // rlc
                     0x00 => self.rlc_r8(R8::B),
@@ -744,9 +746,16 @@ impl Cpu {
 
 #[cfg(test)]
 mod test {
-    use std::io::BufWriter;
+    use crate::mmu::MemoryBus;
 
     use super::Cpu;
+    use enumset::EnumSet;
+    use serde::{Deserialize, Serialize};
+    use std::{
+        fs,
+        io::BufWriter,
+        path::{self},
+    };
 
     #[ignore]
     #[test]
@@ -778,6 +787,222 @@ mod test {
             // if line == 152040 {
             //     break;
             // }
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+    struct Sm83State {
+        #[serde(flatten)]
+        cpu_state: CpuState,
+        #[serde(rename = "ram")]
+        ram_state: Vec<(u16, u8)>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+    struct CpuState {
+        a: u8,
+        b: u8,
+        c: u8,
+        d: u8,
+        e: u8,
+        f: u8,
+        h: u8,
+        l: u8,
+        pc: u16,
+        sp: u16,
+        // ime: u8,
+        // #[serde(default)]
+        // ie: u8,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Sm83TestCase {
+        name: String,
+        initial: Sm83State,
+        #[serde(rename = "final")]
+        terminal: Sm83State,
+    }
+
+    struct ByteArrayMmu {
+        memory: [u8; 0x10000],
+    }
+
+    impl MemoryBus for ByteArrayMmu {
+        fn read_byte(&self, addr: u16) -> u8 {
+            self.memory[addr as usize]
+        }
+
+        fn write_byte(&mut self, addr: u16, byte: u8) {
+            self.memory[addr as usize] = byte
+        }
+
+        fn step(&mut self, _t_cycles: u8) {}
+
+        fn interrupts_enabled(&self) -> enumset::EnumSet<crate::mmu::InterruptKind> {
+            EnumSet::empty()
+        }
+        fn interrupts_requested(&self) -> enumset::EnumSet<crate::mmu::InterruptKind> {
+            EnumSet::empty()
+        }
+        fn pressed_buttons(&self) -> enumset::EnumSet<crate::joypad::Button> {
+            todo!()
+        }
+        fn set_pressed_buttons(&mut self, _buttons: enumset::EnumSet<crate::joypad::Button>) {
+            todo!()
+        }
+        fn in_boot_rom(&self) -> bool {
+            todo!()
+        }
+        fn set_not_in_boot_rom(&mut self) {
+            todo!()
+        }
+        fn ppu_as_ref(&self) -> &crate::ppu::Ppu {
+            todo!()
+        }
+
+        fn clear_requested_interrupt(&mut self, _interrupt: crate::mmu::InterruptKind) {
+            todo!()
+        }
+    }
+
+    #[test]
+    fn sm83_per_instruction_test() {
+        let test_dir = path::Path::new("tests/sm83/v1");
+        let ignored_tests = [
+            // STOP test
+            "tests/sm83/v1/10.json",
+            // HALT test
+            "tests/sm83/v1/76.json",
+        ];
+        for entry in fs::read_dir(test_dir).unwrap() {
+            let path = entry.unwrap().path();
+            assert_eq!(
+                path.extension().unwrap(),
+                "json",
+                "Unexpected file in sm83 tests directory: {:?}",
+                path
+            );
+            if ignored_tests.contains(&path.display().to_string().as_str()) {
+                continue;
+            }
+            let json = fs::read_to_string(&path).unwrap();
+            let test_cases: Vec<Sm83TestCase> = serde_json::from_str(&json).unwrap();
+            for case in test_cases {
+                eprintln!(
+                    "\n{:X?}\ninitial:\n\t{:X?}\nterminal:\n\t{:X?}",
+                    case.name, case.initial, case.terminal
+                );
+                let mut cpu = Cpu::from_state(&case.initial);
+                cpu.step();
+                if let Err(err) = cpu.verify_state(&case.terminal) {
+                    panic!(
+                        "Test case '{}' in file '{}' failed: {}",
+                        case.name,
+                        path.display(),
+                        err
+                    );
+                }
+            }
+        }
+    }
+
+    impl Cpu {
+        fn from_state(state: &Sm83State) -> Self {
+            let mut cpu = Cpu::new(&[], None, false);
+            cpu.mmu = Box::new(ByteArrayMmu {
+                memory: [0; 0x10000],
+            });
+
+            cpu.regs.a = state.cpu_state.a;
+            cpu.regs.f = state.cpu_state.f;
+            cpu.regs.b = state.cpu_state.b;
+            cpu.regs.c = state.cpu_state.c;
+            cpu.regs.d = state.cpu_state.d;
+            cpu.regs.e = state.cpu_state.e;
+            cpu.regs.h = state.cpu_state.h;
+            cpu.regs.l = state.cpu_state.l;
+            cpu.regs.pc = state.cpu_state.pc;
+            cpu.regs.sp = state.cpu_state.sp;
+
+            for &(addr, val) in &state.ram_state {
+                eprintln!("Writing {addr:4X} <- {val:2X}");
+                cpu.mmu.write_byte(addr, val);
+            }
+            cpu
+        }
+
+        fn verify_state(&self, expected: &Sm83State) -> Result<(), String> {
+            if self.regs.a != expected.cpu_state.a {
+                return Err(format!(
+                    "Register A mismatch - got: {:02X}, expected: {:02X}",
+                    self.regs.a, expected.cpu_state.a
+                ));
+            }
+            if self.regs.f != expected.cpu_state.f {
+                return Err(format!(
+                    "Register F mismatch - got: {:02X}, expected: {:02X}",
+                    self.regs.f, expected.cpu_state.f
+                ));
+            }
+            if self.regs.b != expected.cpu_state.b {
+                return Err(format!(
+                    "Register B mismatch - got: {:02X}, expected: {:02X}",
+                    self.regs.b, expected.cpu_state.b
+                ));
+            }
+            if self.regs.c != expected.cpu_state.c {
+                return Err(format!(
+                    "Register C mismatch - got: {:02X}, expected: {:02X}",
+                    self.regs.c, expected.cpu_state.c
+                ));
+            }
+            if self.regs.d != expected.cpu_state.d {
+                return Err(format!(
+                    "Register D mismatch - got: {:02X}, expected: {:02X}",
+                    self.regs.d, expected.cpu_state.d
+                ));
+            }
+            if self.regs.e != expected.cpu_state.e {
+                return Err(format!(
+                    "Register E mismatch - got: {:02X}, expected: {:02X}",
+                    self.regs.e, expected.cpu_state.e
+                ));
+            }
+            if self.regs.h != expected.cpu_state.h {
+                return Err(format!(
+                    "Register H mismatch - got: {:02X}, expected: {:02X}",
+                    self.regs.h, expected.cpu_state.h
+                ));
+            }
+            if self.regs.l != expected.cpu_state.l {
+                return Err(format!(
+                    "Register L mismatch - got: {:02X}, expected: {:02X}",
+                    self.regs.l, expected.cpu_state.l
+                ));
+            }
+            if self.regs.pc != expected.cpu_state.pc {
+                return Err(format!(
+                    "PC mismatch - got: {:04X}, expected: {:04X}",
+                    self.regs.pc, expected.cpu_state.pc
+                ));
+            }
+            if self.regs.sp != expected.cpu_state.sp {
+                return Err(format!(
+                    "SP mismatch - got: {:04X}, expected: {:04X}",
+                    self.regs.sp, expected.cpu_state.sp
+                ));
+            }
+            for &(addr, expected_val) in &expected.ram_state {
+                let actual_val = self.mmu.read_byte(addr);
+                if actual_val != expected_val {
+                    return Err(format!(
+                        "RAM mismatch at {:04X} - got: {:02X}, expected: {:02X}",
+                        addr, actual_val, expected_val
+                    ));
+                }
+            }
+
+            Ok(())
         }
     }
 }

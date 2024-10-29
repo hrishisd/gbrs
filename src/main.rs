@@ -230,10 +230,10 @@ fn execute_rom(
             };
         }
 
-        if pressed_buttons != cpu.mmu.pressed_buttons {
+        if pressed_buttons != cpu.mmu.pressed_buttons() {
             eprintln!("{pressed_buttons:?}");
         }
-        cpu.mmu.pressed_buttons = pressed_buttons;
+        cpu.mmu.set_pressed_buttons(pressed_buttons);
 
         // Execute CPU cycles for one frame
         let mut cycles_in_frame: u32 = 0;
@@ -244,7 +244,7 @@ fn execute_rom(
 
         // Update background texture
         if let Some((ref mut canvas, ref mut texture)) = background_canvas_and_texture {
-            let background = cpu.mmu.ppu.dbg_resolve_background();
+            let background = cpu.mmu.ppu_as_ref().dbg_resolve_background();
             texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
                 for (y, row) in background.iter().enumerate() {
                     for (x, &color) in row.iter().enumerate() {
@@ -261,7 +261,7 @@ fn execute_rom(
 
         // Update OAM texture
         if let Some((ref mut canvas, ref mut texture)) = obj_canvas_and_texture {
-            let oam_data = cpu.mmu.ppu.dbg_resolve_objects();
+            let oam_data = cpu.mmu.ppu_as_ref().dbg_resolve_objects();
             texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
                 for (y, row) in oam_data.iter().enumerate() {
                     for (x, &color) in row.iter().enumerate() {
@@ -278,7 +278,7 @@ fn execute_rom(
 
         // update window texture
         if let Some((ref mut canvas, ref mut texture)) = window_canvas_and_texture {
-            let window = cpu.mmu.ppu.dbg_resolve_window();
+            let window = cpu.mmu.ppu_as_ref().dbg_resolve_window();
             let window = window
                 .iter()
                 .map(|line| line.as_slice())
@@ -286,7 +286,7 @@ fn execute_rom(
             update_canvas(canvas, texture, &window)?;
         }
 
-        let lcd = cpu.mmu.ppu.lcd_display;
+        let lcd = cpu.mmu.ppu_as_ref().lcd_display;
         let lcd: Vec<_> = lcd.iter().map(|line| line.as_slice()).collect();
         update_canvas(&mut lcd_canvas, &mut lcd_texture, &lcd)?;
 

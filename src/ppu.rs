@@ -337,11 +337,12 @@ impl Ppu {
                     // the index of this pixel in the lcd line
                     let lcd_idx = obj_lcd_x_pos + pixel_color_idx as i16;
                     let is_transparent = *pixel_color_id == ColorId::Id0;
-                    if (0..160).contains(&lcd_idx) &&
-                        !is_transparent
+                    if (0..160).contains(&lcd_idx)
+                        && !is_transparent
                         // check should render over background
                         && (obj.priority == Priority::Zero
-                            || lcd_line_bg_and_window_color_ids[lcd_idx as usize] == ColorId::Id0 || !self.bg_enabled)
+                            || lcd_line_bg_and_window_color_ids[lcd_idx as usize] == ColorId::Id0
+                            || !self.bg_enabled)
                     {
                         let palette = self.obj_color_palettes[match obj.palette {
                             ObjColorPaletteIdx::Zero => 0,
@@ -1249,7 +1250,7 @@ mod tests {
     }
 
     #[test]
-    fn draw_stacked_obj() {
+    fn draw_8x16_obj() {
         let mut ppu = Ppu::new();
         ppu.bg_enabled = false;
         ppu.window_enabled = false;

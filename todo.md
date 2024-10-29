@@ -12,7 +12,7 @@
 - [x] wrap in CLI and configure logging and framerate
 - [x] implement the HALT instruction
 - [x] implement input handling
-- [ ] [pass json tests](https://discord.com/channels/465585922579103744/465586075830845475/1300513715623428137)
+- [x] [pass json tests](https://discord.com/channels/465585922579103744/465586075830845475/1300513715623428137)
 - [ ] pass dmg-acid2 ppu tests
 - [ ] support rom banking
 - [ ] Do a big refactor/cleanup

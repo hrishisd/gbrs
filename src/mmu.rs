@@ -3,6 +3,7 @@
 use enumset::{EnumSet, EnumSetType};
 use proptest::sample::select;
 use sdl2::sys::SelectionNotify;
+use serde::de::EnumAccess;
 
 use crate::joypad;
 use crate::ppu::{
@@ -13,7 +14,37 @@ use crate::timer::{Timer, TimerFrequency};
 use crate::util::U8Ext;
 use core::panic;
 use joypad::Button;
+use std::iter::Enumerate;
 use std::{cmp::min, slice};
+
+pub trait MemoryBus {
+    fn read_byte(&self, addr: u16) -> u8;
+    fn write_byte(&mut self, addr: u16, byte: u8);
+    fn step(&mut self, t_cycles: u8);
+    fn interrupts_enabled(&self) -> EnumSet<InterruptKind>;
+    fn interrupts_requested(&self) -> EnumSet<InterruptKind>;
+    fn clear_requested_interrupt(&mut self, interrupt: InterruptKind);
+
+    fn pressed_buttons(&self) -> EnumSet<Button>;
+    fn set_pressed_buttons(&mut self, buttons: EnumSet<Button>);
+    fn in_boot_rom(&self) -> bool;
+    fn set_not_in_boot_rom(&mut self);
+
+    fn ppu_as_ref(&self) -> &Ppu;
+
+    fn read_word(&self, addr: u16) -> u16 {
+        let lo = self.read_byte(addr);
+        let hi = self.read_byte(addr + 1);
+        u16::from_le_bytes([lo, hi])
+    }
+
+    fn write_word(&mut self, addr: u16, word: u16) {
+        let [lo, hi] = word.to_le_bytes();
+        self.write_byte(addr, lo);
+        self.write_byte(addr + 1, hi);
+    }
+}
+
 pub struct Mmu {
     rom_bank_0: [u8; 0x4000],
     rom_bank_n: [u8; 0x4000],
@@ -75,20 +106,10 @@ impl Mmu {
             ..Mmu::new(rom)
         }
     }
+}
 
-    pub fn step(&mut self, t_cycles: u8) {
-        let overflowed = self.timer.update(t_cycles);
-        // println!("Timer: {:#?}, overflowed: {:#?}", self.timer, overflowed);
-        if overflowed {
-            self.interrupts_requested |= InterruptKind::Timer;
-        }
-        let ppu_interrupts = self.ppu.step(t_cycles);
-        self.interrupts_requested |= ppu_interrupts;
-
-        self.divider.update(t_cycles);
-    }
-
-    pub fn read_byte(&self, addr: u16) -> u8 {
+impl MemoryBus for Mmu {
+    fn read_byte(&self, addr: u16) -> u8 {
         match addr {
             // ROM bank 0
             0x0000..=0x3FFF => {
@@ -264,18 +285,7 @@ impl Mmu {
         }
     }
 
-    pub fn read_word(&self, addr: u16) -> u16 {
-        let lo = self.read_byte(addr);
-        let hi = self.read_byte(addr + 1);
-        // println!(
-        //     "MMU: Read word {:#X}: {:#X}",
-        //     addr,
-        //     u16::from_le_bytes([lo, hi])
-        // );
-        u16::from_le_bytes([lo, hi])
-    }
-
-    pub fn write_byte(&mut self, addr: u16, byte: u8) {
+    fn write_byte(&mut self, addr: u16, byte: u8) {
         // println!("MMU: Write byte {:#X}: {:#X}", addr, byte);
         match addr {
             // ROM bank 0
@@ -369,7 +379,6 @@ impl Mmu {
             0xFF40 => {
                 let [lcd_enable, window_tile_map_bit, window_enable, bg_and_window_tile_data_bit, bg_tile_map_area_bit, obj_size_bit, obj_enable, bg_enable] =
                     byte.bits();
-                // TODO: assert that lcd only goes from false->true when ppu is in VBlank mode
                 self.ppu.lcd_enabled = lcd_enable;
                 self.ppu.window_tile_map_select = TileMapArea::from_bit(window_tile_map_bit);
                 self.ppu.window_enabled = window_enable;
@@ -467,11 +476,47 @@ impl Mmu {
         }
     }
 
-    pub fn write_word(&mut self, addr: u16, word: u16) {
-        // println!("MMU: Write word {:#X}: {:#X}", addr, word);
-        let [lo, hi] = word.to_le_bytes();
-        self.write_byte(addr, lo);
-        self.write_byte(addr + 1, hi);
+    fn step(&mut self, t_cycles: u8) {
+        let overflowed = self.timer.update(t_cycles);
+        if overflowed {
+            self.interrupts_requested |= InterruptKind::Timer;
+        }
+        let ppu_interrupts = self.ppu.step(t_cycles);
+        self.interrupts_requested |= ppu_interrupts;
+
+        self.divider.update(t_cycles);
+    }
+
+    fn interrupts_enabled(&self) -> EnumSet<InterruptKind> {
+        self.interrupts_enabled
+    }
+
+    fn interrupts_requested(&self) -> EnumSet<InterruptKind> {
+        self.interrupts_requested
+    }
+
+    fn pressed_buttons(&self) -> EnumSet<Button> {
+        self.pressed_buttons
+    }
+
+    fn set_pressed_buttons(&mut self, buttons: EnumSet<Button>) {
+        self.pressed_buttons = buttons;
+    }
+
+    fn in_boot_rom(&self) -> bool {
+        self.in_boot_rom
+    }
+
+    fn set_not_in_boot_rom(&mut self) {
+        self.in_boot_rom = false;
+    }
+
+    fn ppu_as_ref(&self) -> &Ppu {
+        &self.ppu
+    }
+
+    fn clear_requested_interrupt(&mut self, interrupt: InterruptKind) {
+        self.interrupts_requested.remove(interrupt);
     }
 }
 
