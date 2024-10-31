@@ -3,7 +3,6 @@ use std::{
     io::{BufWriter, Write},
 };
 
-// #![allow(unused)]
 use opcode::{RstVec, CC};
 use register_file::{Registers, R16, R8};
 

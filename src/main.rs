@@ -57,7 +57,7 @@ struct Cli {
 
     /// Render gameboy object tiles in a separate window for debugging
     #[arg(long, default_value = "false")]
-    show_obj_tiles: bool,
+    show_obj_layer: bool,
 
     /// Vertical and horizontal scaling for the gameboy display
     #[arg(long, default_value = "4")]
@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // object tiles layer
-    let obj_canvas_and_texture = if args.show_obj_tiles {
+    let obj_canvas_and_texture = if args.show_obj_layer {
         let window = video_subsystem
             .window(
                 "OAM Debug View",
@@ -181,6 +181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_rom(
     mut cpu: cpu::Cpu,
     mut event_pump: sdl2::EventPump,

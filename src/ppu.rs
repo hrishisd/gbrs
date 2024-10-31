@@ -52,14 +52,14 @@ pub struct Ppu {
     /// The on-screen coordinates of the visible 160x144 pixel area within the 256x256 pixel background map.
     ///
     /// AKA SCY (ScrollY) and SCX (ScrollX)
-    pub bg_viewport_offset: Coord,
+    pub bg_viewport_offset: Position,
 
     /// The on-screen coordinates of the window's top-left pixel (WY and WX)
     ///
     /// The x position of this coordinate is the actual x position of the window on the background - 7
     /// So if you want to draw the window in the upper left corner (0,0), this coordinate would be (0,7)
     /// The window is visible, if enabled, when x is in \[0,166\] and y is in \[0, 143\]
-    pub window_top_left: Coord,
+    pub window_top_left: Position,
 
     /// LCD Y compare. Used to set flags when compared with LY
     pub lyc: u8,
@@ -96,7 +96,7 @@ impl Ppu {
             obj_enabled: false,
             bg_enabled: false,
             bg_color_palette: ColorPalette::from(0x00),
-            bg_viewport_offset: Coord { x: 0, y: 0 },
+            bg_viewport_offset: Position { x: 0, y: 0 },
             lyc: 0,
             lcd_status: LcdStatus {
                 lyc_int_select: false,
@@ -105,12 +105,12 @@ impl Ppu {
                 mode_0_int_select: false,
             },
             obj_color_palettes: [ColorPalette::from(0x00); 2],
-            window_top_left: Coord { x: 0, y: 0 },
+            window_top_left: Position { x: 0, y: 0 },
             obj_attribute_memory: [ObjectAttributes {
                 y_pos: 0,
                 x_pos: 0,
                 tile_idx: 0,
-                priority: Priority::Zero,
+                bg_over_obj_priority: Priority::Zero,
                 y_flip: false,
                 x_flip: false,
                 palette: ObjColorPaletteIdx::Zero,
@@ -257,134 +257,213 @@ impl Ppu {
         interrupts
     }
 
+    /// Draw a single scanline of the LCD display based on the current PPU state
+    ///
+    /// Returns an array of 160 colors representing one horizontal line of pixels
+    ///
+    /// # Arguments
+    ///
+    /// * `vram_tiles` - Tile data stored in VRAM
+    /// * `line` - The current scanline being drawn (0-153)
+    /// * `bg_and_window_tile_data_select` - Whether to use 0x8000 or 0x8800 addressing mode for background/window tiles
+    /// * `bg_enabled` - Whether the background is enabled. This must be set for the window to be enabled
+    /// * `bg_and_window_palette` - The color palette to use for background and window tiles
+    /// * `bg_tile_map` - The tile map to use for background rendering
+    /// * `bg_viewport_offset` - The viewport's offset within the background map (SCX/SCY)
+    /// * `window_enabled` - Whether window rendering is enabled
+    /// * `window_tile_map` - The tile map to use for window rendering
+    /// * `window_top_left_pos` - The window's position on screen (WX,WY). The window's x coordinate on the LCD coordinate system is WX-7
+    /// * `obj_enabled` - Whether sprite/object rendering is enabled
+    /// * `obj_size` - Whether sprites are 8x8 or 8x16 pixels
+    /// * `obj_attr_memory` - Object Attribute Memory containing sprite data
+    /// * `obj_palettes` - The two color palettes available for sprites
+    #[allow(clippy::too_many_arguments)]
+    fn draw_scan_line_internal(
+        // common args
+        vram_tiles: &VRamTileData,
+        lcd_line: u8,
+        // bg and window common args
+        bg_and_window_tile_data_select: BgAndWindowTileDataArea,
+        bg_enabled: bool,
+        bg_and_window_palette: ColorPalette,
+        // background-specific args
+        bg_tile_map: &TileMap,
+        bg_viewport_offset: Position,
+        // window-specific args
+        window_enabled: bool,
+        window_tile_map: &TileMap,
+        window_top_left_pos: Position,
+        // obj-specific args
+        obj_enabled: bool,
+        obj_size: ObjSize,
+        obj_attr_memory: &[ObjectAttributes; 40],
+        obj_palettes: [ColorPalette; 2],
+    ) -> [Color; 160] {
+        // TODO: should the line be all white, when bg is disabled?
+        let mut result = [if bg_enabled {
+            Color::Black
+        } else {
+            Color::White
+        }; 160];
+        // Preserve the color ids while drawing the background and window to resolve priority when drawing objects
+        let mut bg_line_color_ids = [ColorId::Id0; 160];
+        if bg_enabled {
+            // the index of the line being drawn in the 256x256 background coordinate system
+            let bg_row: u8 = bg_viewport_offset.y.wrapping_add(lcd_line);
+            for lcd_col in 0..160 {
+                let bg_col: u8 = bg_viewport_offset.x.wrapping_add(lcd_col as u8);
+                // bg_row and bg_col represent the position of a pixel in the 256x256 background layer
+                // Now we need to find the corresponding color id for this pixel in the background map
+                let pixel_color_id = {
+                    // First, find the corresponding tile for this pixel
+                    let tile_idx =
+                        bg_tile_map.tile_indices[bg_row as usize / 8][bg_col as usize / 8];
+                    let tile = match bg_and_window_tile_data_select {
+                        BgAndWindowTileDataArea::X8800 => {
+                            vram_tiles.get_tile_from_0x8800_signed(tile_idx)
+                        }
+                        BgAndWindowTileDataArea::X8000 => vram_tiles.get_tile_from_0x8000(tile_idx),
+                    };
+                    tile.lines[bg_row as usize % 8].color_ids[bg_col as usize % 8]
+                };
+                result[lcd_col] = bg_and_window_palette.lookup(pixel_color_id);
+                bg_line_color_ids[lcd_col] = pixel_color_id;
+            }
+            // let y_idx = if show
+        }
+        // the window is only visible if both the window and background are enabled, and the window offset falls within the ranges WX=0..166, WY=0..143
+        let window_visible = bg_enabled
+            && window_enabled
+            && window_top_left_pos.y <= lcd_line
+            && (0..=166).contains(&window_top_left_pos.x)
+            && (0..=143).contains(&window_top_left_pos.y);
+        if bg_enabled && window_visible {
+            // the index of the line being drawn in the 256x256 window coordinate system
+            let window_row = (lcd_line - window_top_left_pos.y) as usize;
+            for lcd_col in 0..160 {
+                // window_row, window_col are the index of a pixel in the 256x256 window coordinate system
+                let window_col = lcd_col as i16 + 7 - window_top_left_pos.x as i16;
+                if window_col < 0 {
+                    // window is not visible at (line, lcd_col)
+                    // (the window does not wrap around)
+                } else {
+                    let window_col = window_col as usize;
+                    let pixel_color_id = {
+                        let tile_idx = window_tile_map.tile_indices[window_row / 8][window_col / 8];
+                        let tile = match bg_and_window_tile_data_select {
+                            BgAndWindowTileDataArea::X8800 => {
+                                vram_tiles.get_tile_from_0x8800_signed(tile_idx)
+                            }
+                            BgAndWindowTileDataArea::X8000 => {
+                                vram_tiles.get_tile_from_0x8000(tile_idx)
+                            }
+                        };
+                        tile.lines[window_row % 8].color_ids[window_col % 8]
+                    };
+                    result[lcd_col] = bg_and_window_palette.lookup(pixel_color_id);
+                    bg_line_color_ids[lcd_col] = pixel_color_id
+                }
+            }
+        }
+        if obj_enabled {
+            // let mut objs_on_line = Vec::with_capacity(10);
+            let obj_lines = |obj: ObjectAttributes| {
+                let obj_lcd_y = obj.y_pos as i16 - 16;
+                obj_lcd_y..(obj_lcd_y + obj_size.height() as i16)
+            };
+            // These are the (at-most) 10 objects on the line sorted from highest to lowest priority
+            let prioritized_objects_on_line = {
+                let mut objects_on_line = obj_attr_memory
+                    .iter()
+                    // filter only objects on line
+                    .filter(|&&obj| obj_lines(obj).contains(&(lcd_line as i16)))
+                    .take(10)
+                    .collect::<Vec<_>>();
+                objects_on_line.sort_by_key(|obj| obj.x_pos);
+                objects_on_line
+            };
+            // draw the objects in lowest to highest priority, so that higher priority objects hide lower priority objects
+            for obj in prioritized_objects_on_line.iter().rev() {
+                // get the tile of this object that is on the current line
+
+                // The index into an objects tile(s) of the line being rendered
+                let obj_tiles_row_idx = {
+                    // the y-position of the object on the lcd coordinate system
+                    let obj_lcd_y = obj.y_pos as i16 - 16;
+                    let line_idx = if obj.y_flip {
+                        obj_size.height() as i16 - (lcd_line as i16 - obj_lcd_y) - 1
+                    } else {
+                        lcd_line as i16 - obj_lcd_y
+                    };
+                    assert_matches!(line_idx, 0..=15, "BUG: invalid result while calculating idx of object tile line, line: {}, obj: {:?}",lcd_line, obj);
+                    line_idx as usize
+                };
+
+                // Get the row of the object's tiles that intersects with the
+                let mut pixel_row = if obj_tiles_row_idx < 8 {
+                    vram_tiles.get_tile_from_0x8000(obj.tile_idx).lines[obj_tiles_row_idx]
+                } else {
+                    assert!(obj_size == ObjSize::Dim8x16);
+                    let base_tile_idx = obj.tile_idx & 0b1111_1110;
+                    let tile = vram_tiles.get_tile_from_0x8000(base_tile_idx + 1);
+                    tile.lines[obj_tiles_row_idx - 8]
+                }
+                .color_ids;
+
+                if obj.x_flip {
+                    pixel_row.reverse();
+                }
+
+                // Draw the line of the object tile
+                for (pixel_idx, pixel_color_id) in pixel_row.into_iter().enumerate() {
+                    // the position of this pixel on the LCD is
+                    let lcd_col_idx = obj.x_pos as i16 - 8 + pixel_idx as i16;
+                    // Only draw if this pixel of object appears on the display
+                    if (0..160).contains(&lcd_col_idx) {
+                        let lcd_col_idx = lcd_col_idx as usize;
+                        let is_transparent = pixel_color_id == ColorId::Id0;
+                        if !is_transparent
+                            // Draw if the bg does not have priority over the object
+                            && (obj.bg_over_obj_priority == Priority::Zero
+                                || bg_line_color_ids[lcd_col_idx] == ColorId::Id0)
+                        {
+                            let palette = obj_palettes[match obj.palette {
+                                ObjColorPaletteIdx::Zero => 0,
+                                ObjColorPaletteIdx::One => 1,
+                            }];
+                            result[lcd_col_idx] = palette.lookup(pixel_color_id);
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Resolve pixel values for a line of the LCD display
     fn draw_scan_line(&self) -> [Color; 160] {
-        let mut lcd_line = [Color::Black; 160];
-        let mut lcd_line_bg_and_window_color_ids = [ColorId::Id0; 160];
-        if self.bg_enabled {
-            let tile_map = match self.bg_tile_map_select {
+        Ppu::draw_scan_line_internal(
+            &self.vram_tile_data,
+            self.line,
+            self.bg_and_window_tile_data_select,
+            self.bg_enabled,
+            self.bg_color_palette,
+            match self.bg_tile_map_select {
                 TileMapArea::X9800 => &self.lo_tile_map,
                 TileMapArea::X9C00 => &self.hi_tile_map,
-            };
-            // The index of the line being rendered, in reference to the entire 256x256 background
-            let bg_y_pos = self.bg_viewport_offset.y.wrapping_add(self.line);
-            for lcd_x_pos in 0u8..160 {
-                let bg_x_pos = self.bg_viewport_offset.x.wrapping_add(lcd_x_pos);
-
-                // we are resolving the value of the pixel on the lcd at (lcd_x_pos, self.line)
-                // This is equivalent to resolving the value of the pixel on the background at (bg_x_pos, bg_y_pos)
-                let tile_idx = tile_map.tile_indices[bg_y_pos as usize / 8][bg_x_pos as usize / 8];
-                let tile = match self.bg_and_window_tile_data_select {
-                    BgAndWindowTileDataArea::X8000 => {
-                        self.vram_tile_data.get_tile_from_0x8000(tile_idx)
-                    }
-                    BgAndWindowTileDataArea::X8800 => {
-                        self.vram_tile_data.get_tile_from_0x8800_signed(tile_idx)
-                    }
-                };
-
-                let tile_line_idx = bg_y_pos % 8;
-                let tile_col_idx = bg_x_pos % 8;
-                let color_id = tile.lines[tile_line_idx as usize].color_ids[tile_col_idx as usize];
-                let color = self.bg_color_palette.lookup(color_id);
-                lcd_line[lcd_x_pos as usize] = color;
-                lcd_line_bg_and_window_color_ids[lcd_x_pos as usize] = color_id;
-            }
-        }
-        if self.obj_enabled {
-            let obj_height = match self.obj_size {
-                ObjSize::Dim8x8 => 8,
-                ObjSize::Dim8x16 => 16,
-            };
-            for obj in self.obj_attribute_memory {
-                // range of lcd lines that the object occupies
-                // The position of the object on the lcd's coordinate system
-                let obj_lcd_y_pos = obj.y_pos as i16 - 16;
-                let obj_lcd_x_pos = obj.x_pos as i16 - 8;
-                let obj_visible_on_line = (1..168).contains(&obj.x_pos)
-                    && ((obj_lcd_y_pos)..(obj_lcd_y_pos + obj_height))
-                        .contains(&(self.line as i16));
-                if !obj_visible_on_line {
-                    continue;
-                }
-
-                // The index of the tile line of the object that is on this lcd line
-                let obj_line_idx = if obj.y_flip {
-                    obj_height - (self.line as i16 - obj_lcd_y_pos) - 1
-                } else {
-                    self.line as i16 - obj_lcd_y_pos
-                };
-
-                let obj_row = {
-                    let line = if obj_line_idx <= 7 {
-                        self.vram_tile_data.get_tile_from_0x8000(obj.tile_idx).lines
-                            [obj_line_idx as usize]
-                    } else {
-                        assert_eq!(obj_height, 16);
-                        self.vram_tile_data
-                            .get_tile_from_0x8000(obj.tile_idx + 1)
-                            .lines[(obj_line_idx - 8) as usize]
-                    };
-                    if obj.x_flip {
-                        let mut clone = line.color_ids;
-                        clone.reverse();
-                        clone
-                    } else {
-                        line.color_ids
-                    }
-                };
-                for (pixel_color_idx, pixel_color_id) in obj_row.iter().enumerate() {
-                    // the index of this pixel in the lcd line
-                    let lcd_idx = obj_lcd_x_pos + pixel_color_idx as i16;
-                    let is_transparent = *pixel_color_id == ColorId::Id0;
-                    if (0..160).contains(&lcd_idx)
-                        && !is_transparent
-                        // check should render over background
-                        && (obj.priority == Priority::Zero
-                            || lcd_line_bg_and_window_color_ids[lcd_idx as usize] == ColorId::Id0
-                            || !self.bg_enabled)
-                    {
-                        let palette = self.obj_color_palettes[match obj.palette {
-                            ObjColorPaletteIdx::Zero => 0,
-                            ObjColorPaletteIdx::One => 1,
-                        }];
-                        lcd_line[lcd_idx as usize] = palette.lookup(*pixel_color_id);
-                    }
-                }
-            }
-        }
-        if self.window_enabled {
-            let window_tile_map = match self.window_tile_map_select {
+            },
+            self.bg_viewport_offset,
+            self.window_enabled,
+            match self.window_tile_map_select {
                 TileMapArea::X9800 => &self.lo_tile_map,
                 TileMapArea::X9C00 => &self.hi_tile_map,
-            };
-            let window_y = self.line - self.window_top_left.y;
-            for window_x in 0u8..160 {
-                let lcd_x_pos = window_x.wrapping_add(self.window_top_left.x.wrapping_sub(7));
-                if lcd_x_pos >= 160 {
-                    continue;
-                }
-                let tile_x = window_x / 8;
-                let tile_y = window_y / 8;
-                let tile_idx = window_tile_map.tile_indices[tile_y as usize][tile_x as usize];
-                let tile = match self.bg_and_window_tile_data_select {
-                    BgAndWindowTileDataArea::X8000 => {
-                        self.vram_tile_data.get_tile_from_0x8000(tile_idx)
-                    }
-                    BgAndWindowTileDataArea::X8800 => {
-                        self.vram_tile_data.get_tile_from_0x8800_signed(tile_idx)
-                    }
-                };
-                let tile_line_idx = window_y % 8;
-                let tile_col_idx = window_x % 8;
-                let color_id = tile.lines[tile_line_idx as usize].color_ids[tile_col_idx as usize];
-                let color = self.bg_color_palette.lookup(color_id);
-                lcd_line[lcd_x_pos as usize] = color;
-                lcd_line_bg_and_window_color_ids[lcd_x_pos as usize] = color_id;
-            }
-        }
-
-        lcd_line
+            },
+            self.window_top_left,
+            self.obj_enabled,
+            self.obj_size,
+            &self.obj_attribute_memory,
+            self.obj_color_palettes,
+        )
     }
 
     /// This condition should be checked every time the current line is updated.
@@ -559,6 +638,7 @@ impl Ppu {
             }
         }
         // draw vertical lines of lcd
+        #[allow(clippy::needless_range_loop)]
         for y in 16..=160 {
             grid[y][8] = Color::Black;
             grid[y][168] = Color::Black;
@@ -631,7 +711,7 @@ pub struct LcdStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Coord {
+pub struct Position {
     pub x: u8,
     pub y: u8,
 }
@@ -698,6 +778,13 @@ impl ObjSize {
         match self {
             ObjSize::Dim8x8 => false,
             ObjSize::Dim8x16 => true,
+        }
+    }
+
+    fn height(self) -> u8 {
+        match self {
+            ObjSize::Dim8x8 => 8,
+            ObjSize::Dim8x16 => 16,
         }
     }
 }
@@ -932,7 +1019,7 @@ pub struct ObjectAttributes {
     pub tile_idx: u8,
 
     // -- attributes/flags --
-    pub priority: Priority,
+    pub bg_over_obj_priority: Priority,
     pub y_flip: bool,
     pub x_flip: bool,
     pub palette: ObjColorPaletteIdx,
@@ -941,7 +1028,7 @@ pub struct ObjectAttributes {
 impl ObjectAttributes {
     pub fn as_bytes(&self) -> [u8; 4] {
         let byte_3 = u8::from_bits([
-            match self.priority {
+            match self.bg_over_obj_priority {
                 Priority::Zero => false,
                 Priority::One => true,
             },
@@ -1099,7 +1186,7 @@ mod tests {
         ppu.bg_enabled = true;
         ppu.window_enabled = false;
         ppu.obj_enabled = false;
-        ppu.bg_viewport_offset = Coord { x: 0, y: 0 };
+        ppu.bg_viewport_offset = Position { x: 0, y: 0 };
         ppu.line = 0;
         ppu.bg_and_window_tile_data_select = BgAndWindowTileDataArea::X8000;
         ppu.bg_tile_map_select = TileMapArea::X9800;
@@ -1143,7 +1230,7 @@ mod tests {
         // now fill the second tile row in the background map with 1 dark gray tile followed by 31 black tiles
         ppu.lo_tile_map.tile_indices[1][0] = 2;
         ppu.lo_tile_map.tile_indices[1][1..].fill(3);
-        ppu.bg_viewport_offset = Coord { x: 0, y: 3 };
+        ppu.bg_viewport_offset = Position { x: 0, y: 3 };
         ppu.line = 5;
         // we are now drawing line 5 of the LCD screen, which is offset 3 from the top of the background map
         // This should display the second row of tiles
@@ -1206,24 +1293,24 @@ mod tests {
             y_pos: 0,
             x_pos: 0,
             tile_idx: 0,
-            priority: Priority::Zero,
+            bg_over_obj_priority: Priority::Zero,
             y_flip: false,
             x_flip: false,
             palette: ObjColorPaletteIdx::Zero,
         };
         // first, at position 0,0, the object should be invisible
         let line = ppu.draw_scan_line();
-        assert_eq!(line, [Color::Black; 160]);
+        assert_eq!(line, [Color::White; 160]);
 
         // now, make the object visible by moving it down 9 rows and to the right 1 column
         ppu.obj_attribute_memory[0].y_pos = 9;
         ppu.obj_attribute_memory[0].x_pos = 1;
         let line = ppu.draw_scan_line();
         assert_eq!(line[0], Color::DarkGray);
-        // The rest of the screen should still be black
-        assert_eq!(line[1..], [Color::Black; 159]);
+        // The rest of the screen should still be blank
+        assert_eq!(line[1..], [Color::White; 159]);
         ppu.line = 1;
-        assert_eq!(ppu.draw_scan_line(), [Color::Black; 160]);
+        assert_eq!(ppu.draw_scan_line(), [Color::White; 160]);
 
         // Now, flip the object vertically and render the last line of the object on the first line of the lcd
         ppu.line = 0;
@@ -1232,21 +1319,22 @@ mod tests {
         ppu.obj_attribute_memory[0].y_flip = true;
 
         let line = ppu.draw_scan_line();
-        assert_eq!(line[..4], [Color::Black; 4]);
+        assert_eq!(line[..4], [Color::White; 4]);
         assert_eq!(line[4..8], [Color::LightGray; 4]);
-        assert_eq!(line[8..], [Color::Black; 152]);
+        assert_eq!(line[8..], [Color::White; 152]);
 
         // Now flip the object horizontally and vertically and render the last line of the object
         ppu.obj_attribute_memory[0].x_flip = true;
         let line = ppu.draw_scan_line();
         assert_eq!(line[..4], [Color::LightGray; 4]);
-        assert_eq!(line[4..], [Color::Black; 156]);
+        assert_eq!(line[4..], [Color::White; 156]);
 
         // Now unflip the object vertically and render the last line of the object
         ppu.obj_attribute_memory[0].y_flip = false;
         let line = ppu.draw_scan_line();
         assert_eq!(line[..4], [Color::DarkGray; 4]);
-        assert_eq!(line[4..], [Color::Black; 156]);
+        assert_eq!(line[4..8], [Color::Black; 4]);
+        assert_eq!(line[8..], [Color::White; 152]);
     }
 
     #[test]
@@ -1336,14 +1424,14 @@ mod tests {
             y_pos: 0,
             x_pos: 0,
             tile_idx: 0,
-            priority: Priority::Zero,
+            bg_over_obj_priority: Priority::Zero,
             y_flip: false,
             x_flip: false,
             palette: ObjColorPaletteIdx::Zero,
         };
         // first, at position 0,0, the object should be invisible
         let line = ppu.draw_scan_line();
-        assert_eq!(line, [Color::Black; 160]);
+        assert_eq!(line, [Color::White; 160]);
 
         // now, make the object visible by moving it down a single row row and to the right 8 columns
         ppu.obj_attribute_memory[0].y_pos = 1;
@@ -1351,9 +1439,9 @@ mod tests {
         let line = ppu.draw_scan_line();
         assert_eq!(line[..8], [Color::LightGray; 8]);
         // The rest of the screen should still be black
-        assert_eq!(line[8..], [Color::Black; 152]);
+        assert_eq!(line[8..], [Color::White; 152]);
         ppu.line = 1;
-        assert_eq!(ppu.draw_scan_line(), [Color::Black; 160]);
+        assert_eq!(ppu.draw_scan_line(), [Color::White; 160]);
 
         // Now flip the object vertically and rerender the first line of the object
         ppu.obj_attribute_memory[0].y_flip = true;
@@ -1362,14 +1450,14 @@ mod tests {
         let line = ppu.draw_scan_line();
         assert_eq!(line[0], Color::LightGray);
         assert_eq!(line[1..8], [Color::DarkGray; 7]);
-        assert_eq!(line[8..], [Color::Black; 152]);
+        assert_eq!(line[8..], [Color::White; 152]);
 
         // Now flip the object horizontally and vertically and render the first line of the object
         ppu.obj_attribute_memory[0].x_flip = true;
         let line = ppu.draw_scan_line();
         assert_eq!(line[..7], [Color::DarkGray; 7]);
         assert_eq!(line[7], Color::LightGray);
-        assert_eq!(line[8..], [Color::Black; 152]);
+        assert_eq!(line[8..], [Color::White; 152]);
 
         // Now, keep the object flipped vertically, move it fully into the screen, and check its rendered correctly
         ppu.obj_attribute_memory[0].y_flip = true;

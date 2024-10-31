@@ -1,21 +1,14 @@
-#![allow(unused)]
-
 use enumset::{EnumSet, EnumSetType};
-use proptest::sample::select;
-use sdl2::sys::SelectionNotify;
-use serde::de::EnumAccess;
 
 use crate::joypad;
 use crate::ppu::{
-    self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjColorPaletteIdx, ObjSize,
-    ObjectAttributes, Ppu, Priority, TileMapArea,
+    self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjColorPaletteIdx, ObjSize, Ppu,
+    Priority, TileMapArea,
 };
 use crate::timer::{Timer, TimerFrequency};
 use crate::util::U8Ext;
 use core::panic;
 use joypad::Button;
-use std::iter::Enumerate;
-use std::{cmp::min, slice};
 
 pub trait MemoryBus {
     fn read_byte(&self, addr: u16) -> u8;
@@ -204,7 +197,7 @@ impl MemoryBus for Mmu {
             0xFF0F => self.interrupts_requested.as_u8(),
             0xFF10..=0xFF3F => {
                 // TODO: audio
-                0
+                0xFF
             }
             // LCD control
             0xFF40 => u8::from_bits([
@@ -321,7 +314,7 @@ impl MemoryBus for Mmu {
                         let [priority, y_flip, x_flip, dmg_palette, _, _, _, _] = byte.bits();
                         obj.y_flip = y_flip;
                         obj.x_flip = x_flip;
-                        obj.priority = match priority {
+                        obj.bg_over_obj_priority = match priority {
                             true => Priority::One,
                             false => Priority::Zero,
                         };
@@ -379,7 +372,15 @@ impl MemoryBus for Mmu {
             0xFF40 => {
                 let [lcd_enable, window_tile_map_bit, window_enable, bg_and_window_tile_data_bit, bg_tile_map_area_bit, obj_size_bit, obj_enable, bg_enable] =
                     byte.bits();
+                {
+                    println!(
+                        "LCDC change: {:08b} -> {:08b}",
+                        self.read_byte(0xFF40),
+                        byte
+                    );
+                };
                 self.ppu.lcd_enabled = lcd_enable;
+                self.ppu.bg_tile_map_select = TileMapArea::from_bit(bg_tile_map_area_bit);
                 self.ppu.window_tile_map_select = TileMapArea::from_bit(window_tile_map_bit);
                 self.ppu.window_enabled = window_enable;
                 self.ppu.bg_and_window_tile_data_select = if bg_and_window_tile_data_bit {
@@ -558,6 +559,8 @@ impl JoypadSelect {
 
 #[cfg(test)]
 mod tests {
+    use ppu::ObjectAttributes;
+
     use super::*;
     #[test]
     fn interrupts_from_byte() {
@@ -600,7 +603,7 @@ mod tests {
                 y_pos,
                 x_pos,
                 tile_idx,
-                priority: Priority::One,
+                bg_over_obj_priority: Priority::One,
                 y_flip: false,
                 x_flip: true,
                 palette: ObjColorPaletteIdx::Zero
