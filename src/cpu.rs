@@ -907,7 +907,7 @@ mod test {
 
     impl Cpu {
         fn from_state(state: &Sm83State) -> Self {
-            let mut cpu = Cpu::new(&[], None, false);
+            let mut cpu = Cpu::new(&[0x00; 0x8000], None, false);
             cpu.mmu = Box::new(ByteArrayMmu {
                 memory: [0; 0x10000],
             });

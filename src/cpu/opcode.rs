@@ -1116,7 +1116,7 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use proptest::{prop_assert_eq, proptest};
-    const FAKE_ROM: [u8; 0] = [];
+    const FAKE_ROM: [u8; 0x8000] = [0; 0x8000];
 
     use crate::cpu::{
         register_file::{Flag, R8},
@@ -1130,10 +1130,14 @@ mod tests {
     fn test_ime_update() {
         use ImeState::*;
         // Program is
+        let mut program = [0; 0x8000];
+        program[0] = 0xFB;
+        // let program = [0xFB,0..;0x8000];
         // EI
         // NOP
         // NOP
-        let mut cpu = Cpu::new(&[0xFB, 0x00, 0x00], None, false);
+        // ...
+        let mut cpu = Cpu::new(&program, None, false);
         cpu.mmu.set_not_in_boot_rom();
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
@@ -1150,11 +1154,14 @@ mod tests {
     /// EI sets the IME register, but the effect is only visible after the instruction following EI is executed. If the following instruction is DI, IME will remain unset
     fn ei_di_unset_ime() {
         use ImeState::*;
+        let mut program = [0x00; 0x8000];
+        program[0] = 0xFB;
+        program[1] = 0xF3;
         // Program is
         // EI
         // DI
         // NOP
-        let mut cpu = Cpu::new(&[0xFB, 0xF3, 0x00], None, false);
+        let mut cpu = Cpu::new(&program, None, false);
         cpu.mmu.set_not_in_boot_rom();
         assert_eq!(cpu.ime, Disabled);
         cpu.step();

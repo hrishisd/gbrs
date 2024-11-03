@@ -1,12 +1,13 @@
 use enumset::{EnumSet, EnumSetType};
 
-use crate::joypad;
 use crate::ppu::{
     self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjColorPaletteIdx, ObjSize, Ppu,
     Priority, TileMapArea,
 };
 use crate::timer::{Timer, TimerFrequency};
 use crate::util::U8Ext;
+use crate::{cartridge, joypad};
+use cartridge::Cartridge;
 use core::panic;
 use joypad::Button;
 
@@ -39,9 +40,10 @@ pub trait MemoryBus {
 }
 
 pub struct Mmu {
-    rom_bank_0: [u8; 0x4000],
-    rom_bank_n: [u8; 0x4000],
-    ext_ram: [u8; 0x2000],
+    // rom_bank_0: [u8; 0x4000],
+    // rom_bank_n: [u8; 0x4000],
+    // ext_ram: [u8; 0x2000],
+    cartridge: Box<dyn Cartridge>,
     work_ram: [u8; 0x2000],
     high_ram: [u8; 0x80],
     boot_rom: [u8; 0x100],
@@ -68,6 +70,18 @@ impl Mmu {
         let upto_idx = rom_bank_0.len().min(rom.len());
         rom_bank_0[..upto_idx].copy_from_slice(&rom[..upto_idx]);
 
+        let mbc_type = rom[0x0147];
+        let cartridge: Box<dyn Cartridge> = match mbc_type {
+            0x00 => Box::new(cartridge::NoMbc::from_game_rom(rom)),
+            0x01 | 0x02 | 0x03 => {
+                // mbc1
+                Box::new(cartridge::Mbc1::from_game_rom(rom))
+            }
+            _ => {
+                todo!("Unsupported MBC: {:0X}", mbc_type)
+            }
+        };
+
         // TODO: initialize other rom banks
         let mut rom_bank_n = [0; 0x4000];
         if rom.len() > 0x4000 {
@@ -75,9 +89,10 @@ impl Mmu {
             rom_bank_n[..n_bytes].copy_from_slice(&rom[0x4000..(0x4000 + n_bytes)]);
         }
         Mmu {
-            rom_bank_0,
-            rom_bank_n,
-            ext_ram: [0; 0x2000],
+            // rom_bank_0,
+            // rom_bank_n,
+            // ext_ram: [0; 0x2000],
+            cartridge,
             work_ram: [0; 0x2000],
             high_ram: [0; 0x80],
             ppu: Ppu::new(),
@@ -103,20 +118,18 @@ impl Mmu {
 impl MemoryBus for Mmu {
     fn read_byte(&self, addr: u16) -> u8 {
         match addr {
-            // ROM bank 0
-            0x0000..=0x3FFF => {
+            // ROM
+            0x0000..=0x7FFF => {
                 if self.in_boot_rom && addr < 0x100 {
                     self.boot_rom[addr as usize]
                 } else {
-                    self.rom_bank_0[addr as usize]
+                    self.cartridge.read(addr)
                 }
             }
-            // ROM bank 01-NN
-            0x4000..=0x7FFF => self.rom_bank_n[(addr & 0x3FFF) as usize],
             // VRAM
             0x8000..=0x9FFF => self.ppu.read_vram_byte(addr),
             // external RAM
-            0xA000..=0xBFFF => self.ext_ram[(addr & 0x1FFF) as usize],
+            0xA000..=0xBFFF => self.cartridge.read(addr),
             // work RAM
             0xC000..=0xDFFF => self.work_ram[(addr & 0x1FFF) as usize],
             // echo RAM
@@ -289,7 +302,7 @@ impl MemoryBus for Mmu {
                 self.ppu.write_vram_byte(addr, byte);
             }
             // external RAM
-            0xA000..=0xBFFF => self.ext_ram[(addr & 0x1FFF) as usize] = byte,
+            0xA000..=0xBFFF => self.cartridge.write(addr, byte),
             // work RAM
             0xC000..=0xDFFF => self.work_ram[(addr & 0x1FFF) as usize] = byte,
             // echo RAM
@@ -581,8 +594,7 @@ mod tests {
 
     #[test]
     fn oam_memory_rw() {
-        let empty_arr = [];
-        let mut mmu = Mmu::new(&empty_arr);
+        let mut mmu = Mmu::new(&[0; 0x8000]);
         for addr in 0xFE00..=0xFe9F {
             assert_eq!(mmu.read_byte(addr), 0);
         }

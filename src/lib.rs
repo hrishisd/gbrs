@@ -1,6 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(assert_matches)]
 #![feature(generic_const_exprs)]
+mod cartridge;
 pub mod cpu;
 pub mod joypad;
 mod mmu;
