@@ -44,28 +44,19 @@ impl Cartridge for NoMbc {
     }
 }
 
-// Max 2 MiB of ROM
-// 32 KiB RAM (4 8kb ram blocks)
-//
-// 2000-3FFF
-// ROM bank number (01-1F)
-// 5 bits (higher bits discarded)
-// if bank number st to higher value than num banks in cart, only use loewr bits
-//
-// 4000-5FFF
-// RAM bank number (0 - 3) OR upper bits of ROM bank number
-// 6000-7FFFF
-// banking mode select
-// if cart is <8KB ram and <512KB ROM, no effect
-//
 pub struct Mbc1 {
-    rom_banks: Vec<[u8; 1 << 14]>,
-    ram_banks: Vec<[u8; 1 << 13]>,
+    rom_banks: Vec<[u8; 0x4000]>,
     rom_bank_idx: usize,
+    ram_banks: Vec<[u8; 0x2000]>,
     ram_bank_idx: usize,
-    /// False -> simple mode
-    /// True -> Advance mode
-    bank_mode_select: bool,
+    ram_enable: bool,
+    _bank_mode_select: BankModeSelect,
+}
+
+#[allow(dead_code)]
+enum BankModeSelect {
+    ExtendedROMBanking,
+    RAMBanking,
 }
 
 impl Mbc1 {
@@ -73,14 +64,14 @@ impl Mbc1 {
         let rom_size_byte = rom[0x0148];
         assert!((0x00..=0x08).contains(&rom_size_byte));
         let num_banks = 2 * (1 << rom_size_byte);
-        let mut rom_banks = vec![[0x00u8; 1 << 14]; num_banks];
+        let mut rom_banks = vec![[0; 0x4000]; num_banks];
         assert_eq!(
             rom.len(),
             num_banks * 1 << 14,
             "ROM should be num banks * 16 KiB"
         );
         for idx in 0..rom_banks.len() {
-            let bank_size = 1 << 14;
+            let bank_size = 0x4000;
             rom_banks[idx].copy_from_slice(&rom[idx * bank_size..((idx + 1) * bank_size)]);
         }
 
@@ -90,29 +81,23 @@ impl Mbc1 {
                 vec![]
             }
             0x02 => {
-                vec![[0u8; 1 << 13]; 1]
+                vec![[0u8; 0x2000]; 1]
             }
             0x03 => {
-                vec![[0u8; 1 << 13]; 4]
+                vec![[0u8; 0x2000]; 4]
             }
-            // 0x04 => {
-            //     vec![[0u8; 1 << 13]; 16]
-            // }
-            // 0x05 => {
-            //     vec![[0u8; 1 << 13]; 8]
-            // }
             _ => {
                 panic!("Unexpected RAM size for MBC 1: {:X}", ram_size_byte)
             }
         };
         assert!((0x00..=0x08).contains(&rom_size_byte));
-        // read number of banks
         Mbc1 {
             rom_banks,
             ram_banks,
             rom_bank_idx: 0,
             ram_bank_idx: 0,
-            bank_mode_select: false,
+            ram_enable: false,
+            _bank_mode_select: BankModeSelect::RAMBanking,
         }
     }
 }
@@ -125,7 +110,14 @@ impl Cartridge for Mbc1 {
                 let bank_idx = std::cmp::min(1, self.rom_bank_idx);
                 self.rom_banks[bank_idx][(addr - 0x4000) as usize]
             }
-            0xA000..=0xBFFF => self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000],
+            0xA000..=0xBFFF => {
+                if self.ram_enable {
+                    self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000]
+                } else {
+                    0xFF
+                }
+            }
+
             _ => panic!("invalid cartridge read: {}", addr),
         }
     }
@@ -133,7 +125,11 @@ impl Cartridge for Mbc1 {
     fn write(&mut self, addr: u16, byte: u8) {
         match addr {
             0x0000..=0x1FFF => {
-                // ignore RAM enable
+                if addr & 0x0F == 0x0A {
+                    self.ram_enable = true;
+                } else {
+                    self.ram_enable = false;
+                }
             }
             0x2000..=0x3FFF => {
                 // TODO: maybe mask this further if idx out of bounds error
@@ -146,8 +142,13 @@ impl Cartridge for Mbc1 {
             }
             0x6000..=0x7FFF => {
                 // TODO: bank mode select
+                panic!("Have not implemented bank mode select for MBC1")
             }
-            0xA000..=0xBFFF => self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000] = byte,
+            0xA000..=0xBFFF => {
+                if self.ram_enable {
+                    self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000] = byte;
+                }
+            }
             _ => panic!("Illegal write to cartridge"),
         }
     }
