@@ -564,7 +564,9 @@ enum JoypadSelect {
 impl JoypadSelect {
     fn from_be_bits(hi: bool, lo: bool) -> Self {
         match (hi, lo) {
-            (false, false) => panic!("Can't select buttons and dpad at the same time"),
+            // (false, false) => panic!("Can't select buttons and dpad at the same time"),
+            // TODO: what should happen when both buttons and dpad are selected?
+            (false, false) => JoypadSelect::Buttons,
             (false, true) => JoypadSelect::Buttons,
             (true, false) => JoypadSelect::DPad,
             (true, true) => JoypadSelect::None,

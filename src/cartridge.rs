@@ -149,25 +149,116 @@ impl Cartridge for Mbc1 {
                     self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000] = byte;
                 }
             }
-            _ => panic!("Illegal write to cartridge"),
+            _ => panic!("Illegal write to cartridge: {} <- {}", addr, byte),
         }
     }
 }
 
-pub struct Mbc3 {}
+enum RamBankOrRtcSelect {
+    Ram { idx: usize },
+    Rtc,
+}
+
+pub struct Mbc3 {
+    rom_banks: Vec<[u8; 0x4000]>,
+    rom_bank_idx: usize,
+    ram_banks: Vec<[u8; 0x2000]>,
+    ram_bank_idx: usize,
+    ram_and_timer_enable: bool,
+    // ram_bank_or_rtc_select: RamBankOrRtcSelect,
+}
 
 impl Mbc3 {
-    pub fn from_game_rom(_rom: &[u8]) -> Self {
-        todo!("Implement MBC 3")
+    pub fn from_game_rom(rom: &[u8]) -> Self {
+        let rom_size_byte = rom[0x0148];
+        assert!(
+            (0x00..=0x06).contains(&rom_size_byte),
+            "MBC3 can have up to 2 MiB of ROM"
+        );
+        let num_banks = 2 * (1 << rom_size_byte);
+        assert_eq!(
+            rom.len(),
+            num_banks * 1 << 14,
+            "ROM should be num banks * 16 KiB"
+        );
+        let mut rom_banks = vec![[0; 0x4000]; num_banks];
+        for idx in 0..rom_banks.len() {
+            let bank_size = 0x4000;
+            rom_banks[idx].copy_from_slice(&rom[idx * bank_size..((idx + 1) * bank_size)]);
+        }
+
+        let ram_size_byte = rom[0x0149];
+        let ram_banks = match ram_size_byte {
+            0x00 | 0x01 => {
+                vec![]
+            }
+            0x02 => {
+                vec![[0u8; 0x2000]; 1]
+            }
+            0x03 => {
+                vec![[0u8; 0x2000]; 4]
+            }
+            _ => {
+                panic!("Unexpected RAM size for MBC 1: {:X}", ram_size_byte)
+            }
+        };
+        assert!((0x00..=0x08).contains(&rom_size_byte));
+        Mbc3 {
+            rom_banks,
+            ram_banks,
+            rom_bank_idx: 1,
+            ram_bank_idx: 0,
+            ram_and_timer_enable: false,
+            // ram_bank_select: todo!(),
+            // ram_bank_or_rtc_select: todo!(),
+        }
     }
 }
 
 impl Cartridge for Mbc3 {
-    fn read(&self, _addr: u16) -> u8 {
-        todo!("Implement MBC 3 read")
+    fn read(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x3FFF => self.rom_banks[0][addr as usize],
+            0x4000..=0x7FFF => self.rom_banks[self.rom_bank_idx][addr as usize - 0x4000],
+            0xA000..=0xBFFF => self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000],
+            _ => {
+                todo!("BUG: Invalid read from mbc3 cartridge")
+            }
+        }
     }
 
-    fn write(&mut self, _addr: u16, _byte: u8) {
-        todo!("Implement MBC 3 write")
+    fn write(&mut self, addr: u16, byte: u8) {
+        match addr {
+            0x0000..=0x1FFF => {
+                self.ram_and_timer_enable = byte & 0xF == 0xA;
+            }
+            0x2000..=0x3FFF => {
+                let rom_bank_number = byte & 0x07F;
+                self.rom_bank_idx = if rom_bank_number == 0 {
+                    1
+                } else {
+                    rom_bank_number as usize
+                };
+            }
+            0x4000..=0x5FFF => {
+                match byte {
+                    0x0..=0x3 => {
+                        self.ram_bank_idx = byte as usize;
+                    }
+                    0x8..=0xC => {
+                        todo!("Implement rtc register")
+                    }
+                    _ => {
+                        // ignore other writes
+                    }
+                }
+                // ignore writes to ROM
+            }
+            0x6000..=0x7FFF => {
+                todo!("Implement latch clock data")
+            }
+            0xA000..=0xBFFF => self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000] = byte,
+            _ => panic!("Illegal write to cartridge: {} <- {}", addr, byte),
+        }
     }
 }
