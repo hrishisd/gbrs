@@ -1,5 +1,5 @@
 use core::panic;
-use std::assert_matches::assert_matches;
+use std::{assert_matches::assert_matches, time::Instant};
 
 use enumset::EnumSet;
 
@@ -20,7 +20,7 @@ pub struct Ppu {
     /// The number of T-clock cycles spent in the current mode.
     ///
     /// Used to know when to switch modes and move the line index.
-    cycles_in_mode: u32,
+    pub cycles_in_mode: u32,
     pub mode: Mode,
 
     // -- LCD Control flags
@@ -52,7 +52,7 @@ pub struct Ppu {
     /// The on-screen coordinates of the visible 160x144 pixel area within the 256x256 pixel background map.
     ///
     /// AKA SCY (ScrollY) and SCX (ScrollX)
-    pub bg_viewport_offset: Position,
+    pub viewport_offset: Position,
 
     /// The on-screen coordinates of the window's top-left pixel (WY and WX)
     ///
@@ -65,6 +65,9 @@ pub struct Ppu {
     pub lyc: u8,
     /// LCD status register
     pub lcd_status: LcdStatus,
+
+    //debugging
+    pub last_viewport_update: std::time::Instant,
 }
 
 impl Ppu {
@@ -96,7 +99,7 @@ impl Ppu {
             obj_enabled: false,
             bg_enabled: false,
             bg_color_palette: ColorPalette::from(0x00),
-            bg_viewport_offset: Position { x: 0, y: 0 },
+            viewport_offset: Position { x: 0, y: 0 },
             lyc: 0,
             lcd_status: LcdStatus {
                 lyc_int_select: false,
@@ -116,6 +119,7 @@ impl Ppu {
                 palette: ObjColorPaletteIdx::Zero,
             }; 40],
             lcd_display: [[Color::Black; 160]; 144],
+            last_viewport_update: Instant::now(),
         }
     }
 
@@ -452,7 +456,7 @@ impl Ppu {
                 TileMapArea::X9800 => &self.lo_tile_map,
                 TileMapArea::X9C00 => &self.hi_tile_map,
             },
-            self.bg_viewport_offset,
+            self.viewport_offset,
             self.window_enabled,
             match self.window_tile_map_select {
                 TileMapArea::X9800 => &self.lo_tile_map,
@@ -472,7 +476,7 @@ impl Ppu {
     }
 
     /// Construct a 256x256 grid of colors based on the ppu's background tile map and color palette.
-    /// This returns the entire background, ignoring the viewport and viewport offset.
+    /// This returns the entire background and draws the viewport outline on the background
     /// This function ignores the background window enable bit.
     pub fn dbg_resolve_background(&self) -> [[Color; 256]; 256] {
         let mut background = [[Color::Black; 256]; 256];
@@ -515,32 +519,22 @@ impl Ppu {
             }
         }
 
-        // Draw viewport frame
-        let viewport_x = self.bg_viewport_offset.x as usize;
-        let viewport_y = self.bg_viewport_offset.y as usize;
-
-        // Draw horizontal lines of the viewport frame
-        for x in viewport_x..viewport_x.saturating_add(160) {
-            if x < 256 {
-                if viewport_y < 256 {
-                    background[viewport_y][x] = Color::Black;
-                }
-                if viewport_y + 144 < 256 {
-                    background[viewport_y + 144][x] = Color::Black;
-                }
-            }
+        // horizontal lines of viewport
+        for i in 0..160 {
+            let top_y = self.viewport_offset.y as usize;
+            let bottom_y = (top_y + 144) % 256;
+            let x = (self.viewport_offset.x as usize + i) % 256;
+            background[top_y][x] = Color::Black;
+            background[bottom_y][x] = Color::Black;
         }
 
-        #[allow(clippy::needless_range_loop)]
-        for y in viewport_y..viewport_y.saturating_add(144) {
-            if y < 256 {
-                if viewport_x < 256 {
-                    background[y][viewport_x] = Color::Black;
-                }
-                if viewport_x + 160 < 256 {
-                    background[y][viewport_x + 160] = Color::Black;
-                }
-            }
+        // vertical lines of viewport
+        for i in 0..144 {
+            let left_x = self.viewport_offset.x as usize;
+            let right_x = (left_x + 160) % 256;
+            let y = (self.viewport_offset.y as usize + i) % 256;
+            background[y][left_x] = Color::Black;
+            background[y][right_x] = Color::Black;
         }
 
         background
@@ -1186,7 +1180,7 @@ mod tests {
         ppu.bg_enabled = true;
         ppu.window_enabled = false;
         ppu.obj_enabled = false;
-        ppu.bg_viewport_offset = Position { x: 0, y: 0 };
+        ppu.viewport_offset = Position { x: 0, y: 0 };
         ppu.line = 0;
         ppu.bg_and_window_tile_data_select = BgAndWindowTileDataArea::X8000;
         ppu.bg_tile_map_select = TileMapArea::X9800;
@@ -1213,7 +1207,7 @@ mod tests {
         assert_eq!(lcd_row[8..], [Color::LightGray; 152]);
 
         // move the viewport to the right by 1 pixel
-        ppu.bg_viewport_offset.x = 1;
+        ppu.viewport_offset.x = 1;
         // Now the first row of the LCD should be 7 white pixels followed by 152 light gray pixels
         let lcd_row = ppu.draw_scan_line();
         assert_eq!(lcd_row[..7], [Color::White; 7]);
@@ -1222,7 +1216,7 @@ mod tests {
         // we should get the same line even as we scroll the viewport down up to line 7, because each row of tiles 1 and 2 is identical
         for y_offset in 1..7 {
             let lcd_row = ppu.draw_scan_line();
-            ppu.bg_viewport_offset.y = y_offset;
+            ppu.viewport_offset.y = y_offset;
             assert_eq!(lcd_row[..7], [Color::White; 7]);
             assert_eq!(lcd_row[7..], [Color::LightGray; 153]);
         }
@@ -1230,7 +1224,7 @@ mod tests {
         // now fill the second tile row in the background map with 1 dark gray tile followed by 31 black tiles
         ppu.lo_tile_map.tile_indices[1][0] = 2;
         ppu.lo_tile_map.tile_indices[1][1..].fill(3);
-        ppu.bg_viewport_offset = Position { x: 0, y: 3 };
+        ppu.viewport_offset = Position { x: 0, y: 3 };
         ppu.line = 5;
         // we are now drawing line 5 of the LCD screen, which is offset 3 from the top of the background map
         // This should display the second row of tiles

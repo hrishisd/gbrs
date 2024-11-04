@@ -94,7 +94,7 @@ impl Mbc1 {
         Mbc1 {
             rom_banks,
             ram_banks,
-            rom_bank_idx: 0,
+            rom_bank_idx: 1,
             ram_bank_idx: 0,
             ram_enable: false,
             _bank_mode_select: BankModeSelect::RAMBanking,
@@ -106,10 +106,7 @@ impl Cartridge for Mbc1 {
     fn read(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x3FFF => self.rom_banks[0][addr as usize],
-            0x4000..=0x7FFF => {
-                let bank_idx = std::cmp::min(1, self.rom_bank_idx);
-                self.rom_banks[bank_idx][(addr - 0x4000) as usize]
-            }
+            0x4000..=0x7FFF => self.rom_banks[self.rom_bank_idx][(addr - 0x4000) as usize],
             0xA000..=0xBFFF => {
                 if self.ram_enable {
                     self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000]
@@ -125,7 +122,7 @@ impl Cartridge for Mbc1 {
     fn write(&mut self, addr: u16, byte: u8) {
         match addr {
             0x0000..=0x1FFF => {
-                if addr & 0x0F == 0x0A {
+                if byte & 0x0F == 0x0A {
                     self.ram_enable = true;
                 } else {
                     self.ram_enable = false;
@@ -134,7 +131,10 @@ impl Cartridge for Mbc1 {
             0x2000..=0x3FFF => {
                 // TODO: maybe mask this further if idx out of bounds error
                 let idx = byte & 0b0001_1111;
-                self.rom_bank_idx = idx as usize;
+                self.rom_bank_idx = match idx {
+                    0 => 1,
+                    _ => idx as usize,
+                };
             }
             0x4000..=0x5FFF => {
                 let idx = byte & 0b0011;

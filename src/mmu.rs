@@ -237,8 +237,8 @@ impl MemoryBus for Mmu {
                 ])
             }
             // Background viewport position
-            0xFF42 => self.ppu.bg_viewport_offset.y,
-            0xFF43 => self.ppu.bg_viewport_offset.x,
+            0xFF42 => self.ppu.viewport_offset.y,
+            0xFF43 => self.ppu.viewport_offset.x,
             0xFF44 => self.ppu.line,
             0xFF45 => self.ppu.lyc,
             0xFF46 => {
@@ -286,10 +286,10 @@ impl MemoryBus for Mmu {
     fn write_byte(&mut self, addr: u16, byte: u8) {
         // println!("MMU: Write byte {:#X}: {:#X}", addr, byte);
         match addr {
-            // ROM bank 0
-            0x0000..=0x3FFF => {}
-            // ROM bank 01-NN
-            0x4000..=0x7FFF => {}
+            // ROM banks
+            0x0000..=0x7FFF => {
+                self.cartridge.write(addr, byte);
+            }
             // VRAM
             0x8000..=0x9FFF => {
                 self.ppu.write_vram_byte(addr, byte);
@@ -377,7 +377,12 @@ impl MemoryBus for Mmu {
             0xFF40 => {
                 let [lcd_enable, window_tile_map_bit, window_enable, bg_and_window_tile_data_bit, bg_tile_map_area_bit, obj_size_bit, obj_enable, bg_enable] =
                     byte.bits();
-                let prev_lcdc_bits = self.read_byte(0xFF40);
+                if !lcd_enable {
+                    // turn ppu off
+                    self.ppu.line = 0;
+                    self.ppu.mode = ppu::Mode::HorizontalBlank;
+                    self.ppu.cycles_in_mode = 0
+                }
                 self.ppu.lcd_enabled = lcd_enable;
                 self.ppu.bg_tile_map_select = TileMapArea::from_bit(bg_tile_map_area_bit);
                 self.ppu.window_tile_map_select = TileMapArea::from_bit(window_tile_map_bit);
@@ -394,33 +399,6 @@ impl MemoryBus for Mmu {
                 };
                 self.ppu.obj_enabled = obj_enable;
                 self.ppu.bg_enabled = bg_enable;
-                {
-                    #[derive(Debug)]
-                    struct Lcdc {
-                        _lcd_enable: bool,
-                        _window_tile_map_select: TileMapArea,
-                        _window_enable: bool,
-                        _bg_and_window_tile_data_select: BgAndWindowTileDataArea,
-                        _bg_tile_map_select: TileMapArea,
-                        _obj_size: ObjSize,
-                        _obj_enable: bool,
-                        _bg_enable: bool,
-                    }
-                    let lcdc = Lcdc {
-                        _lcd_enable: self.ppu.lcd_enabled,
-                        _window_tile_map_select: self.ppu.window_tile_map_select,
-                        _window_enable: self.ppu.window_enabled,
-                        _bg_and_window_tile_data_select: self.ppu.bg_and_window_tile_data_select,
-                        _bg_tile_map_select: self.ppu.bg_tile_map_select,
-                        _obj_size: self.ppu.obj_size,
-                        _obj_enable: self.ppu.obj_enabled,
-                        _bg_enable: self.ppu.bg_enabled,
-                    };
-                    println!(
-                        "LCDC update: {:08b}->{:08b}\n{:?}",
-                        prev_lcdc_bits, byte, lcdc,
-                    );
-                }
             }
             // LCD status
             0xFF41 => {
@@ -435,10 +413,28 @@ impl MemoryBus for Mmu {
             }
             // Background viewport position
             0xFF42 => {
-                self.ppu.bg_viewport_offset.y = byte;
+                // if self.ppu.viewport_offset.y != byte {
+                // let now = std::time::Instant::now();
+                // let duration = now - self.ppu.last_viewport_update;
+                // println!(
+                //     "Viewport y changed from {:?} to {:?} after {:?}, during LCD mode {:?}",
+                //     self.ppu.viewport_offset.y, byte, duration, self.ppu.mode
+                // );
+                // self.ppu.last_viewport_update = now;
+                // }
+                self.ppu.viewport_offset.y = byte;
             }
             0xFF43 => {
-                self.ppu.bg_viewport_offset.x = byte;
+                // if self.ppu.viewport_offset.x != byte {
+                //     let now = std::time::Instant::now();
+                //     let duration = now - self.ppu.last_viewport_update;
+                //     println!(
+                //         "Viewport x changed from {:?} to {:?} after {:?} during LCD mode {:?}",
+                //         self.ppu.viewport_offset.x, byte, duration, self.ppu.mode
+                //     );
+                //     self.ppu.last_viewport_update = now;
+                // }
+                self.ppu.viewport_offset.x = byte;
             }
             0xFF44 => {
                 eprintln!("ROM attempted to write to 0xFF44 which is a read-only IO register for the current LCD Y-position");
