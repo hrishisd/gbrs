@@ -48,16 +48,34 @@ pub struct Mbc1 {}
 
 impl Mbc1 {
     pub fn from_game_rom(_rom: &[u8]) -> Self {
-        todo!()
+        todo!("Implement MBC 1")
     }
 }
 
 impl Cartridge for Mbc1 {
     fn read(&self, _addr: u16) -> u8 {
-        todo!()
+        todo!("Implement MBC1 read")
     }
 
     fn write(&mut self, _addr: u16, _byte: u8) {
-        todo!()
+        todo!("Implement MBC1 write")
+    }
+}
+
+pub struct Mbc3 {}
+
+impl Mbc3 {
+    pub fn from_game_rom(_rom: &[u8]) -> Self {
+        todo!("Implement MBC 3")
+    }
+}
+
+impl Cartridge for Mbc3 {
+    fn read(&self, _addr: u16) -> u8 {
+        todo!("Implement MBC 3 read")
+    }
+
+    fn write(&mut self, _addr: u16, _byte: u8) {
+        todo!("Implement MBC 3 write")
     }
 }

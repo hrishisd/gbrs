@@ -66,32 +66,25 @@ pub struct Mmu {
 
 impl Mmu {
     pub fn new(rom: &[u8]) -> Self {
-        let mut rom_bank_0 = [0; 0x4000];
-        let upto_idx = rom_bank_0.len().min(rom.len());
-        rom_bank_0[..upto_idx].copy_from_slice(&rom[..upto_idx]);
-
         let mbc_type = rom[0x0147];
         let cartridge: Box<dyn Cartridge> = match mbc_type {
-            0x00 => Box::new(cartridge::NoMbc::from_game_rom(rom)),
+            0x00 | 0x08 | 0x09 => Box::new(cartridge::NoMbc::from_game_rom(rom)),
             0x01..=0x03 => {
-                // mbc1
+                // MBC1
                 Box::new(cartridge::Mbc1::from_game_rom(rom))
+            }
+            0x0F..=0x13 => {
+                // MBC3
+                Box::new(cartridge::Mbc3::from_game_rom(rom))
+            }
+            0x19..=0x1E => {
+                todo!("Support MBC 5")
             }
             _ => {
                 todo!("Unsupported MBC: {:0X}", mbc_type)
             }
         };
-
-        // TODO: initialize other rom banks
-        let mut rom_bank_n = [0; 0x4000];
-        if rom.len() > 0x4000 {
-            let n_bytes = rom_bank_n.len().min(rom.len() - 0x4000);
-            rom_bank_n[..n_bytes].copy_from_slice(&rom[0x4000..(0x4000 + n_bytes)]);
-        }
         Mmu {
-            // rom_bank_0,
-            // rom_bank_n,
-            // ext_ram: [0; 0x2000],
             cartridge,
             work_ram: [0; 0x2000],
             high_ram: [0; 0x80],
@@ -403,26 +396,25 @@ impl MemoryBus for Mmu {
                 self.ppu.bg_enabled = bg_enable;
                 {
                     #[derive(Debug)]
-                    #[allow(unused)]
                     struct Lcdc {
-                        lcd_enable: bool,
-                        window_tile_map_select: TileMapArea,
-                        window_enable: bool,
-                        bg_and_window_tile_data_select: BgAndWindowTileDataArea,
-                        bg_tile_map_select: TileMapArea,
-                        obj_size: ObjSize,
-                        obj_enable: bool,
-                        bg_enable: bool,
+                        _lcd_enable: bool,
+                        _window_tile_map_select: TileMapArea,
+                        _window_enable: bool,
+                        _bg_and_window_tile_data_select: BgAndWindowTileDataArea,
+                        _bg_tile_map_select: TileMapArea,
+                        _obj_size: ObjSize,
+                        _obj_enable: bool,
+                        _bg_enable: bool,
                     }
                     let lcdc = Lcdc {
-                        lcd_enable: self.ppu.lcd_enabled,
-                        window_tile_map_select: self.ppu.window_tile_map_select,
-                        window_enable: self.ppu.window_enabled,
-                        bg_and_window_tile_data_select: self.ppu.bg_and_window_tile_data_select,
-                        bg_tile_map_select: self.ppu.bg_tile_map_select,
-                        obj_size: self.ppu.obj_size,
-                        obj_enable: self.ppu.obj_enabled,
-                        bg_enable: self.ppu.bg_enabled,
+                        _lcd_enable: self.ppu.lcd_enabled,
+                        _window_tile_map_select: self.ppu.window_tile_map_select,
+                        _window_enable: self.ppu.window_enabled,
+                        _bg_and_window_tile_data_select: self.ppu.bg_and_window_tile_data_select,
+                        _bg_tile_map_select: self.ppu.bg_tile_map_select,
+                        _obj_size: self.ppu.obj_size,
+                        _obj_enable: self.ppu.obj_enabled,
+                        _bg_enable: self.ppu.bg_enabled,
                     };
                     println!(
                         "LCDC update: {:08b}->{:08b}\n{:?}",
