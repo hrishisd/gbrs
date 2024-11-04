@@ -73,7 +73,7 @@ impl Mmu {
         let mbc_type = rom[0x0147];
         let cartridge: Box<dyn Cartridge> = match mbc_type {
             0x00 => Box::new(cartridge::NoMbc::from_game_rom(rom)),
-            0x01 | 0x02 | 0x03 => {
+            0x01..=0x03 => {
                 // mbc1
                 Box::new(cartridge::Mbc1::from_game_rom(rom))
             }
@@ -384,13 +384,7 @@ impl MemoryBus for Mmu {
             0xFF40 => {
                 let [lcd_enable, window_tile_map_bit, window_enable, bg_and_window_tile_data_bit, bg_tile_map_area_bit, obj_size_bit, obj_enable, bg_enable] =
                     byte.bits();
-                {
-                    println!(
-                        "LCDC change: {:08b} -> {:08b}",
-                        self.read_byte(0xFF40),
-                        byte
-                    );
-                };
+                let prev_lcdc_bits = self.read_byte(0xFF40);
                 self.ppu.lcd_enabled = lcd_enable;
                 self.ppu.bg_tile_map_select = TileMapArea::from_bit(bg_tile_map_area_bit);
                 self.ppu.window_tile_map_select = TileMapArea::from_bit(window_tile_map_bit);
@@ -407,6 +401,34 @@ impl MemoryBus for Mmu {
                 };
                 self.ppu.obj_enabled = obj_enable;
                 self.ppu.bg_enabled = bg_enable;
+                {
+                    #[derive(Debug)]
+                    #[allow(unused)]
+                    struct Lcdc {
+                        lcd_enable: bool,
+                        window_tile_map_select: TileMapArea,
+                        window_enable: bool,
+                        bg_and_window_tile_data_select: BgAndWindowTileDataArea,
+                        bg_tile_map_select: TileMapArea,
+                        obj_size: ObjSize,
+                        obj_enable: bool,
+                        bg_enable: bool,
+                    }
+                    let lcdc = Lcdc {
+                        lcd_enable: self.ppu.lcd_enabled,
+                        window_tile_map_select: self.ppu.window_tile_map_select,
+                        window_enable: self.ppu.window_enabled,
+                        bg_and_window_tile_data_select: self.ppu.bg_and_window_tile_data_select,
+                        bg_tile_map_select: self.ppu.bg_tile_map_select,
+                        obj_size: self.ppu.obj_size,
+                        obj_enable: self.ppu.obj_enabled,
+                        bg_enable: self.ppu.bg_enabled,
+                    };
+                    println!(
+                        "LCDC update: {:08b}->{:08b}\n{:?}",
+                        prev_lcdc_bits, byte, lcdc,
+                    );
+                }
             }
             // LCD status
             0xFF41 => {
