@@ -213,7 +213,7 @@ impl MemoryBus for Mmu {
             0xFF0F => self.interrupts_requested.as_u8(),
             0xFF10..=0xFF3F => {
                 // TODO: audio
-                0xFF
+                0x00
             }
             // LCD control
             0xFF40 => u8::from_bits([
