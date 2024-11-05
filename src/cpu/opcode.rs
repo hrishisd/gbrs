@@ -1035,7 +1035,7 @@ impl Cpu {
         self.regs.set_flag(N, false);
         self.regs.set_flag(H, false);
         self.regs.set_flag(C, !self.regs.flag(C));
-        8
+        4
     }
 
     /// Complement accumulator
@@ -1044,7 +1044,7 @@ impl Cpu {
         self.regs.a = !self.regs.a;
         self.regs.set_flag(N, true);
         self.regs.set_flag(H, true);
-        8
+        4
     }
 
     /// Decimal adjust accumulator to get a correct BCD representation after an arithmetic instruction.
