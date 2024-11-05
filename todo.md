@@ -15,7 +15,7 @@
 - [x] [pass json tests](https://discord.com/channels/465585922579103744/465586075830845475/1300513715623428137)
 - [x] pass dmg-acid2 ppu tests (except for window internal line counter)
 - [x] support MBC1
-- [ ] support MBC3
+- [x] support MBC3
 - [ ] Do a big refactor/cleanup
 - [ ] implement the HALT bug
 - [ ] double check interrupt handling
