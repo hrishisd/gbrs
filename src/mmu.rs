@@ -148,31 +148,42 @@ impl MemoryBus for Mmu {
                 let (select_hi, select_lo) = self.joypad_select.to_be_bits();
                 // If a button is pressed, the corresponding bit is 0, not 1!
                 let btn_state = |button: Button| !self.pressed_buttons.contains(button);
+                use Button::*;
                 match self.joypad_select {
                     JoypadSelect::Buttons => u8::from_bits([
                         true,
                         true,
                         select_hi,
                         select_lo,
-                        btn_state(Button::Start),
-                        btn_state(Button::Select),
-                        btn_state(Button::B),
-                        btn_state(Button::A),
+                        btn_state(Start),
+                        btn_state(Select),
+                        btn_state(B),
+                        btn_state(A),
                     ]),
                     JoypadSelect::DPad => u8::from_bits([
                         true,
                         true,
                         select_hi,
                         select_lo,
-                        btn_state(Button::Down),
-                        btn_state(Button::Up),
-                        btn_state(Button::Left),
-                        btn_state(Button::Right),
+                        btn_state(Down),
+                        btn_state(Up),
+                        btn_state(Left),
+                        btn_state(Right),
                     ]),
                     // If neither buttons nor d-pad is selected ($30 was written), then the low nibble reads $F (all buttons released).
                     JoypadSelect::None => {
                         u8::from_bits([true, true, true, true, true, true, true, true])
                     }
+                    JoypadSelect::All => u8::from_bits([
+                        true,
+                        true,
+                        select_hi,
+                        select_lo,
+                        btn_state(Start) || btn_state(Down),
+                        btn_state(Select) || btn_state(Up),
+                        btn_state(B) || btn_state(Left),
+                        btn_state(A) || btn_state(Right),
+                    ]),
                 }
             }
             0xFF01 | 0xFF02 => 0, // TODO: serial
@@ -556,6 +567,7 @@ pub enum InterruptKind {
 
 /// Configures whether the joypad register returns the state of the buttons or the direction keys.
 enum JoypadSelect {
+    All,
     Buttons,
     DPad,
     None,
@@ -564,9 +576,7 @@ enum JoypadSelect {
 impl JoypadSelect {
     fn from_be_bits(hi: bool, lo: bool) -> Self {
         match (hi, lo) {
-            // (false, false) => panic!("Can't select buttons and dpad at the same time"),
-            // TODO: what should happen when both buttons and dpad are selected?
-            (false, false) => JoypadSelect::Buttons,
+            (false, false) => JoypadSelect::All,
             (false, true) => JoypadSelect::Buttons,
             (true, false) => JoypadSelect::DPad,
             (true, true) => JoypadSelect::None,
@@ -577,6 +587,7 @@ impl JoypadSelect {
             JoypadSelect::Buttons => (false, true),
             JoypadSelect::DPad => (true, false),
             JoypadSelect::None => (true, true),
+            JoypadSelect::All => (false, false),
         }
     }
 }
