@@ -152,7 +152,7 @@ impl Cartridge for Mbc1 {
 
 /// Either RAM/clock is disabled, or we have mapped in a ram bank, or we have mapped a clock register.
 enum RamBankOrRtcSelect {
-    Ram { idx: usize },
+    Ram { idx: u8 },
     Seconds,
     Minutes,
     Hours,
@@ -283,7 +283,7 @@ impl Cartridge for Mbc3 {
                 if self.enable_ram_and_rtc {
                     match self.ram_bank_or_rtc_select {
                         RamBankOrRtcSelect::Ram { idx } => {
-                            self.ram_banks[idx][addr as usize - 0xA000]
+                            self.ram_banks[idx as usize][addr as usize - 0xA000]
                         }
                         RamBankOrRtcSelect::Seconds => self.clock_registers.seconds,
                         RamBankOrRtcSelect::Minutes => self.clock_registers.minutes,
@@ -327,7 +327,7 @@ impl Cartridge for Mbc3 {
             }
             0x4000..=0x5FFF => {
                 self.ram_bank_or_rtc_select = match byte {
-                    0x0..=0x3 => RamBankOrRtcSelect::Ram { idx: byte as usize },
+                    0x0..=0x3 => RamBankOrRtcSelect::Ram { idx: byte },
                     0x8 => RamBankOrRtcSelect::Seconds,
                     0x9 => RamBankOrRtcSelect::Minutes,
                     0xA => RamBankOrRtcSelect::Hours,
@@ -351,7 +351,7 @@ impl Cartridge for Mbc3 {
                 if self.enable_ram_and_rtc {
                     match self.ram_bank_or_rtc_select {
                         RamBankOrRtcSelect::Ram { idx } => {
-                            self.ram_banks[idx][addr as usize - 0xA000] = byte;
+                            self.ram_banks[idx as usize][addr as usize - 0xA000] = byte;
                         }
                         // TODO: implement writes to clock register
                         RamBankOrRtcSelect::Seconds => {
