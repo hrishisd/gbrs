@@ -57,9 +57,9 @@ pub struct Mmu {
     ///
     /// Any set flags only indicate that an interrupt is being *requested*. The actual *execution* of the interrupt handler only happens if both the `IME` register and the corresponding flag in `IE` are set.
     pub interrupts_requested: EnumSet<InterruptKind>,
-    timer: Timer,
+    pub timer: Timer,
     /// TODO: reset when executing STOP instruction and only begin ticking once stop mode ends
-    divider: Timer,
+    pub divider: Timer,
     joypad_select: JoypadSelect,
     pub pressed_buttons: EnumSet<joypad::Button>,
 }

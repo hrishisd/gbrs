@@ -199,10 +199,15 @@ fn execute_rom(
         sdl2::render::Canvas<sdl2::video::Window>,
         sdl2::render::Texture,
     )>,
-    should_sleep: bool,
+    sleep_enabled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut pressed_buttons = EnumSet::<joypad::Button>::empty();
-
+    let mut frame_count: u64 = 0;
+    let mut print_logs: bool = false;
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    let mut fast_mode = false;
+    use std::io::Write;
     loop {
         let frame_start = std::time::Instant::now();
         // Handle events
@@ -218,6 +223,10 @@ fn execute_rom(
                 } => {
                     if let Some(button) = keycode_to_button(key) {
                         pressed_buttons.insert(button);
+                    } else if key == Keycode::D {
+                        print_logs = true;
+                    } else if key == Keycode::LShift {
+                        fast_mode = true;
                     }
                 }
                 Event::KeyUp {
@@ -225,14 +234,14 @@ fn execute_rom(
                 } => {
                     if let Some(button) = keycode_to_button(key) {
                         pressed_buttons.remove(button);
+                    } else if key == Keycode::D {
+                        print_logs = false;
+                    } else if key == Keycode::LShift {
+                        fast_mode = false;
                     }
                 }
                 _ => {}
             };
-        }
-
-        if pressed_buttons != cpu.mmu.pressed_buttons() {
-            eprintln!("{pressed_buttons:?}");
         }
         cpu.mmu.set_pressed_buttons(pressed_buttons);
 
@@ -241,7 +250,23 @@ fn execute_rom(
         while cycles_in_frame < CYCLES_PER_FRAME {
             let cycles = cpu.step();
             cycles_in_frame += cycles as u32;
+
+            if print_logs {
+                // dump cpu state
+                writeln!(lock, "CPU State:")?;
+                writeln!(lock,
+                "IME: {:?} HALTED: {:?}, IE: {:?}, IF: {:?}\nA:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
+                cpu.ime, cpu.is_halted, cpu.mmu.interrupts_enabled(), cpu.mmu.interrupts_requested(), cpu.regs.a, cpu.regs.f, cpu.regs.b, cpu.regs.c, cpu.regs.d, cpu.regs.e, cpu.regs.h, cpu.regs.l, cpu.regs.sp, cpu.regs.pc, cpu.mmu.read_byte(cpu.regs.pc), cpu.mmu.read_byte(cpu.regs.pc+1), cpu.mmu.read_byte(cpu.regs.pc+2), cpu.mmu.read_byte(cpu.regs.pc+3))?;
+                let ppu = cpu.mmu.ppu_as_ref();
+                writeln!(lock, "PPU State:")?;
+                writeln!(lock, "  Mode: {:?}", ppu.mode)?;
+                writeln!(lock, "  Line: {}", ppu.line)?;
+                writeln!(lock, "  LCD Enabled: {}", ppu.lcd_enabled)?;
+                writeln!(lock, "  Window Enabled: {}", ppu.window_enabled)?;
+                writeln!(lock, "----------------------------------------")?;
+            }
         }
+        frame_count = frame_count.wrapping_add(1);
 
         // Update background texture
         if let Some((ref mut canvas, ref mut texture)) = background_canvas_and_texture {
@@ -292,9 +317,16 @@ fn execute_rom(
         update_canvas(&mut lcd_canvas, &mut lcd_texture, &lcd)?;
 
         // Sleep to maintain frame rate, if requested
-        if should_sleep {
+        if sleep_enabled {
             let frame_duration = frame_start.elapsed();
-            if let Some(frame_remaining_duration) = FRAME_DURATION.checked_sub(frame_duration) {
+            let frame_duration_wanted = if fast_mode {
+                FRAME_DURATION / 10
+            } else {
+                FRAME_DURATION
+            };
+            if let Some(frame_remaining_duration) =
+                frame_duration_wanted.checked_sub(frame_duration)
+            {
                 thread::sleep(frame_remaining_duration);
             }
         }

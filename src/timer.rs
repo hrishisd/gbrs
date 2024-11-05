@@ -22,7 +22,7 @@ impl TimerFrequency {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Timer {
     pub frequency: TimerFrequency,
     pub enabled: bool,

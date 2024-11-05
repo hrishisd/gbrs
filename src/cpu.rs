@@ -12,7 +12,7 @@ mod opcode;
 mod register_file;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ImeState {
+pub enum ImeState {
     Enabled,
     Disabled,
     PendingEnable,
@@ -25,8 +25,8 @@ pub struct Cpu {
     /// AKA, the `IME` flag.
     ///
     /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
-    ime: ImeState,
-    is_halted: bool,
+    pub ime: ImeState,
+    pub is_halted: bool,
     dbg_log_file: Option<BufWriter<File>>,
     print_cpu_logs: bool,
 }
