@@ -76,9 +76,7 @@ impl Ppu {
         Self {
             vram_tile_data: VRamTileData {
                 tile_data_blocks: [[Tile {
-                    lines: [TileLine {
-                        color_ids: [ColorId::Id0; 8],
-                    }; 8],
+                    lines: [TileLine { lsbs: 0, msbs: 0 }; 8],
                 }; 128]; 3],
             },
             lo_tile_map: TileMap {
@@ -133,6 +131,7 @@ impl Ppu {
                     let block = &self.vram_tile_data.tile_data_blocks[idx.block_idx];
                     &block[idx.tile_idx]
                 };
+                // TODO: don't materialize all 128 bytes here
                 tile.as_bytes()[idx.byte_idx]
             } // Tile map
             0x9800..=0x9FFF => {
@@ -163,16 +162,11 @@ impl Ppu {
                     &mut block[idx.tile_idx]
                 };
                 let line = &mut tile.lines[idx.line_idx];
-                let LineBytes { lsbs, msbs } = line.as_bytes();
-                let (new_lsbs, new_msbs) = match idx.byte_idx % 2 {
-                    0 => (byte, msbs),
-                    1 => (lsbs, byte),
-                    _ => panic!("BUG"),
-                };
-                *line = TileLine::from_bytes(LineBytes {
-                    lsbs: new_lsbs,
-                    msbs: new_msbs,
-                })
+                if idx.byte_idx % 2 == 0 {
+                    line.lsbs = byte;
+                } else {
+                    line.msbs = byte;
+                }
             } // Tile map
             0x9800..=0x9FFF => {
                 let tile_map = if (0x9800..=0x9BFF).contains(&addr) {
@@ -328,7 +322,7 @@ impl Ppu {
                         }
                         BgAndWindowTileDataArea::X8000 => vram_tiles.get_tile_from_0x8000(tile_idx),
                     };
-                    tile.lines[bg_row as usize % 8].color_ids[bg_col as usize % 8]
+                    tile.lines[bg_row as usize % 8].color_ids()[bg_col as usize % 8]
                 };
                 result[lcd_col] = bg_and_window_palette.lookup(pixel_color_id);
                 bg_line_color_ids[lcd_col] = pixel_color_id;
@@ -361,7 +355,7 @@ impl Ppu {
                                 vram_tiles.get_tile_from_0x8000(tile_idx)
                             }
                         };
-                        tile.lines[window_row % 8].color_ids[window_col % 8]
+                        tile.lines[window_row % 8].color_ids()[window_col % 8]
                     };
                     result[lcd_col] = bg_and_window_palette.lookup(pixel_color_id);
                     bg_line_color_ids[lcd_col] = pixel_color_id
@@ -411,7 +405,7 @@ impl Ppu {
                     let tile = vram_tiles.get_tile_from_0x8000(base_tile_idx + 1);
                     tile.lines[obj_tiles_row_idx - 8]
                 }
-                .color_ids;
+                .color_ids();
 
                 if obj.x_flip {
                     pixel_row.reverse();
@@ -509,7 +503,7 @@ impl Ppu {
 
                 // Copy each pixel from the tile to the background
                 for (line_idx, line) in tile.lines.iter().enumerate() {
-                    for (pixel_idx, color_id) in line.color_ids.iter().enumerate() {
+                    for (pixel_idx, color_id) in line.color_ids().iter().enumerate() {
                         let bg_x = start_x + pixel_idx;
                         let bg_y = start_y + line_idx;
                         background[bg_y][bg_x] = self.bg_color_palette.lookup(*color_id);
@@ -571,7 +565,7 @@ impl Ppu {
 
                 // Copy each pixel from the tile to the window
                 for (line_idx, line) in tile.lines.iter().enumerate() {
-                    for (pixel_idx, color_id) in line.color_ids.iter().enumerate() {
+                    for (pixel_idx, color_id) in line.color_ids().iter().enumerate() {
                         let window_x = start_x + pixel_idx;
                         let window_y = start_y + line_idx;
                         window[window_y][window_x] = self.bg_color_palette.lookup(*color_id);
@@ -605,7 +599,7 @@ impl Ppu {
                 .vram_tile_data
                 .get_tile_from_0x8000(obj.tile_idx)
                 .lines
-                .map(|line| line.color_ids);
+                .map(|line| line.color_ids());
             if obj.x_flip {
                 for line in tile.iter_mut() {
                     line.reverse();
@@ -916,75 +910,55 @@ impl Tile {
     fn as_bytes(&self) -> [u8; 16] {
         let mut res = [0; 16];
         for (idx, line) in self.lines.iter().enumerate() {
-            let bytes = line.as_bytes();
-            res[2 * idx] = bytes.lsbs;
-            res[2 * idx + 1] = bytes.msbs;
+            res[2 * idx] = line.lsbs;
+            res[2 * idx + 1] = line.msbs;
         }
         res
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// The byte representation of the 8 colors of a line
-///
-/// The first byte specifies the least significant bit of the color ID of each pixel,
-/// and the second byte specifies the most significant bit
-///
-/// In both bytes, bit 7 represents the left-most pixel and bit 0, the right-most
-struct LineBytes {
-    lsbs: u8,
-    msbs: u8,
-}
-
+/// In both lsbs and msbs, bit 7 represents the left-most pixel and bit 0, the right-most
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TileLine {
-    /// The color_ids of the pixels from left to right
-    ///
-    /// idx 0 represents the left-most pixel, idx 7 is the right-most pixel
-    pub color_ids: [ColorId; 8],
+    pub lsbs: u8,
+    pub msbs: u8,
 }
 
 impl TileLine {
-    fn as_bytes(&self) -> LineBytes {
-        use ColorId::*;
-        let mut color_id_lsbs = 0;
-        let mut color_id_msbs = 0;
-        // bit 7 of color_id_lsbs is the lsb of the
-        // *left-most* pixel
-        // color_ids[0] is also the color id of the *left-most* pixel
-        for (color_id_idx, color_id) in self.color_ids.iter().enumerate() {
-            let bit_idx = 7 - color_id_idx as u8;
+    /// idx 0 represents the left-most pixel, idx 7 is the right-most pixel
+    pub fn color_ids(self) -> [ColorId; 8] {
+        let mut result = [ColorId::Id0; 8];
+        for bit_idx in 0..=7 {
+            result[7 - bit_idx as usize] = match (self.msbs.bit(bit_idx), self.lsbs.bit(bit_idx)) {
+                (false, false) => ColorId::Id0,
+                (false, true) => ColorId::Id1,
+                (true, false) => ColorId::Id2,
+                (true, true) => ColorId::Id3,
+            }
+        }
+        result
+    }
+
+    /// idx 0 in the array represents the left-most pixel, idx 7 is the right-most pixel
+    pub fn from_color_ids(color_ids: [ColorId; 8]) -> Self {
+        let (mut lsbs, mut msbs) = (0, 0);
+        for (idx, color_id) in color_ids.iter().enumerate() {
+            let bit_idx = 7 - idx as u8;
             match color_id {
-                Id0 => {}
-                Id1 => color_id_lsbs = color_id_lsbs.set(bit_idx),
-                Id2 => color_id_msbs = color_id_msbs.set(bit_idx),
-                Id3 => {
-                    color_id_lsbs = color_id_lsbs.set(bit_idx);
-                    color_id_msbs = color_id_msbs.set(bit_idx);
+                ColorId::Id0 => {}
+                ColorId::Id1 => {
+                    lsbs = lsbs.set(bit_idx);
+                }
+                ColorId::Id2 => {
+                    msbs = msbs.set(bit_idx);
+                }
+                ColorId::Id3 => {
+                    lsbs = lsbs.set(bit_idx);
+                    msbs = msbs.set(bit_idx);
                 }
             }
         }
-        LineBytes {
-            lsbs: color_id_lsbs,
-            msbs: color_id_msbs,
-        }
-    }
-
-    fn from_bytes(bytes: LineBytes) -> TileLine {
-        // color_idx[0] is the left-most pixel
-        // lsbs.bit(7) is the left-most pixel
-        let mut color_ids = [ColorId::Id0; 8];
-        for bit_idx in 0..8 {
-            use ColorId::*;
-            let color_id_idx = 7 - bit_idx as usize;
-            color_ids[color_id_idx] = match (bytes.msbs.bit(bit_idx), bytes.lsbs.bit(bit_idx)) {
-                (false, false) => Id0,
-                (false, true) => Id1,
-                (true, false) => Id2,
-                (true, true) => Id3,
-            }
-        }
-        TileLine { color_ids }
+        TileLine { lsbs, msbs }
     }
 }
 
@@ -1102,23 +1076,6 @@ mod tests {
     }
 
     #[test]
-    fn tile_line_byte_conversion() {
-        use ColorId::*;
-        // MSBS: 0010 0011
-        // LSBS: 0100 1111
-        // Pixel IDS from left to right:
-        // 00, 01, 10, 00, 01, 01, 11, 11
-        let bytes = LineBytes {
-            msbs: 0x23,
-            lsbs: 0x4f,
-        };
-        let line = TileLine::from_bytes(bytes);
-        assert_eq!(line.color_ids, [Id0, Id1, Id2, Id0, Id1, Id1, Id3, Id3]);
-        assert_eq!(line.as_bytes(), bytes);
-        assert_eq!(line, TileLine::from_bytes(line.as_bytes()))
-    }
-
-    #[test]
     fn rw_vram_tile_data() {
         let initial_ppu = Ppu::new();
         assert_eq!(initial_ppu.read_vram_byte(0x8000), 0x00);
@@ -1126,14 +1083,14 @@ mod tests {
         assert_eq!(initial_ppu.read_vram_byte(0x9000), 0x00);
         for addr in [0x8000, 0x8800, 0x9000] {
             let mut ppu = initial_ppu.clone();
-            let line_bytes = LineBytes {
+            let line = TileLine {
                 msbs: 0x23,
                 lsbs: 0x4f,
             };
-            ppu.write_vram_byte(addr, line_bytes.lsbs);
-            ppu.write_vram_byte(addr + 1, line_bytes.msbs);
-            assert_eq!(ppu.read_vram_byte(addr), line_bytes.lsbs);
-            assert_eq!(ppu.read_vram_byte(addr + 1), line_bytes.msbs);
+            ppu.write_vram_byte(addr, line.lsbs);
+            ppu.write_vram_byte(addr + 1, line.msbs);
+            assert_eq!(ppu.read_vram_byte(addr), line.lsbs);
+            assert_eq!(ppu.read_vram_byte(addr + 1), line.msbs);
         }
     }
 
@@ -1167,9 +1124,7 @@ mod tests {
 
     fn mono_color_tile(color_id: ColorId) -> Tile {
         Tile {
-            lines: [TileLine {
-                color_ids: [color_id; 8],
-            }; 8],
+            lines: [TileLine::from_color_ids([color_id; 8]); 8],
         }
     }
 
@@ -1255,30 +1210,14 @@ mod tests {
             use ColorId::*;
             Tile {
                 lines: [
-                    TileLine {
-                        color_ids: [Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2],
-                    },
+                    TileLine::from_color_ids([Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id0, Id0, Id0, Id0, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id3, Id3, Id3, Id3, Id2, Id2, Id2, Id2]),
                 ],
             }
         };
@@ -1352,62 +1291,34 @@ mod tests {
             use ColorId::*;
             Tile {
                 lines: [
-                    TileLine {
-                        color_ids: [Id1, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
-                    },
-                    TileLine {
-                        color_ids: [Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2],
-                    },
+                    TileLine::from_color_ids([Id1, Id2, Id2, Id2, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2]),
+                    TileLine::from_color_ids([Id2, Id2, Id2, Id2, Id2, Id2, Id2, Id2]),
                 ],
             }
         };
         // The second tile should have dark gray in the top-left pixel and light gray everywhere else
         let light_tile = {
             use ColorId::*;
+            // let mut tile = mono_color_tile(Id1);
+            // tile.lines[0] =
+            //     TileLineCompact::from_color_ids([Id2, Id1, Id1, Id1, Id1, Id1, Id1, Id1]);
+
             Tile {
                 lines: [
-                    TileLine {
-                        color_ids: [Id2, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
-                    },
-                    TileLine {
-                        color_ids: [Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1],
-                    },
+                    TileLine::from_color_ids([Id2, Id1, Id1, Id1, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1]),
+                    TileLine::from_color_ids([Id1, Id1, Id1, Id1, Id1, Id1, Id1, Id1]),
                 ],
             }
         };
