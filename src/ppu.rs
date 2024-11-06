@@ -131,8 +131,12 @@ impl Ppu {
                     let block = &self.vram_tile_data.tile_data_blocks[idx.block_idx];
                     &block[idx.tile_idx]
                 };
-                // TODO: don't materialize all 128 bytes here
-                tile.as_bytes()[idx.byte_idx]
+                let line = tile.lines[idx.line_idx];
+                if idx.byte_idx % 2 == 0 {
+                    line.lsbs
+                } else {
+                    line.msbs
+                }
             } // Tile map
             0x9800..=0x9FFF => {
                 let tile_map = if (0x9800..=0x9BFF).contains(&addr) {
@@ -902,19 +906,6 @@ impl VRamTileData {
 pub struct Tile {
     /// `lines[0]` is the top-line
     pub lines: [TileLine; 8],
-}
-
-impl Tile {
-    /// result[0] => 0th row, LSBs
-    /// result[1] => 0th row, MSBs
-    fn as_bytes(&self) -> [u8; 16] {
-        let mut res = [0; 16];
-        for (idx, line) in self.lines.iter().enumerate() {
-            res[2 * idx] = line.lsbs;
-            res[2 * idx + 1] = line.msbs;
-        }
-        res
-    }
 }
 
 /// In both lsbs and msbs, bit 7 represents the left-most pixel and bit 0, the right-most
