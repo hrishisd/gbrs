@@ -333,7 +333,6 @@ impl Ppu {
                 result[lcd_col] = bg_and_window_palette.lookup(pixel_color_id);
                 bg_line_color_ids[lcd_col] = pixel_color_id;
             }
-            // let y_idx = if show
         }
         // the window is only visible if both the window and background are enabled, and the window offset falls within the ranges WX=0..166, WY=0..143
         let window_visible = bg_enabled
@@ -784,11 +783,12 @@ impl ObjSize {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Color {
-    White,
-    LightGray,
-    DarkGray,
-    Black,
+    White = 0,
+    LightGray = 1,
+    DarkGray = 2,
+    Black = 3,
 }
 
 impl Color {

@@ -95,13 +95,6 @@ impl Cpu {
     /// Returns the number of master clock cycles (at 4 MiHz) that the instruction takes.
     /// E.g. executing the `NOP` instruction will return 4
     pub fn step(&mut self) -> u8 {
-        // TODO: if interrupt handled, update t_cycles for step
-        // TODO: check interrupt handling implementation against:
-        //     http://www.codeslinger.co.uk/pages/projects/gameboy/interrupts.html
-        // handle interrupts
-        // eprintln!(
-        //     "IME: {:?} HALTED: {:?}, IE: {:?}, IF: {:?}\nA:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-        //     self.ime, self.is_halted, self.mmu.interrupts_enabled(), self.mmu.interrupts_requested(), self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3));
         let mut handled_interrupt = false;
         if self.ime == ImeState::Enabled {
             use InterruptKind::*;
@@ -150,7 +143,6 @@ impl Cpu {
             self.log_state();
             self.mmu.step(t_cycles);
 
-            // TODO: if interrupt is handled - make sure to communicate this to MMU
             t_cycles + if handled_interrupt { 20 } else { 0 }
         }
     }

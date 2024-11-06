@@ -268,53 +268,64 @@ fn execute_rom(
         }
         frame_count = frame_count.wrapping_add(1);
 
-        // Update background texture
-        if let Some((ref mut canvas, ref mut texture)) = background_canvas_and_texture {
-            let background = cpu.mmu.ppu_as_ref().dbg_resolve_background();
-            texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-                for (y, row) in background.iter().enumerate() {
-                    for (x, &color) in row.iter().enumerate() {
-                        let offset = (y * background[0].len() + x) * 3;
-                        let sdl_color = color_to_sdl_buf_values_dmg(color);
-                        buffer[offset..offset + 3].copy_from_slice(&sdl_color);
+        let should_render = if fast_mode {
+            frame_count % 5 == 0
+        } else if !sleep_enabled {
+            frame_count % 10 == 0
+        } else {
+            true
+        };
+
+        if should_render {
+            // Update background texture
+            if let Some((ref mut canvas, ref mut texture)) = background_canvas_and_texture {
+                let background = cpu.mmu.ppu_as_ref().dbg_resolve_background();
+                texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+                    for (y, row) in background.iter().enumerate() {
+                        for (x, &color) in row.iter().enumerate() {
+                            let offset = (y * background[0].len() + x) * 3;
+                            let sdl_color = color_to_sdl_buf_values_dmg(color);
+                            buffer[offset..offset + 3].copy_from_slice(&sdl_color);
+                        }
                     }
-                }
-            })?;
-            canvas.clear();
-            canvas.copy(texture, None, None)?;
-            canvas.present();
-        }
+                })?;
+                canvas.clear();
+                canvas.copy(texture, None, None)?;
+                canvas.present();
+            }
 
-        // Update OAM texture
-        if let Some((ref mut canvas, ref mut texture)) = obj_canvas_and_texture {
-            let oam_data = cpu.mmu.ppu_as_ref().dbg_resolve_objects();
-            texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-                for (y, row) in oam_data.iter().enumerate() {
-                    for (x, &color) in row.iter().enumerate() {
-                        let offset = (y * oam_data[0].len() + x) * 3;
-                        let sdl_color = color_to_sdl_buf_values_dmg(color);
-                        buffer[offset..offset + 3].copy_from_slice(&sdl_color);
+            // Update OAM texture
+            if let Some((ref mut canvas, ref mut texture)) = obj_canvas_and_texture {
+                let oam_data = cpu.mmu.ppu_as_ref().dbg_resolve_objects();
+                texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+                    for (y, row) in oam_data.iter().enumerate() {
+                        for (x, &color) in row.iter().enumerate() {
+                            let offset = (y * oam_data[0].len() + x) * 3;
+                            let sdl_color = color_to_sdl_buf_values_dmg(color);
+                            buffer[offset..offset + 3].copy_from_slice(&sdl_color);
+                        }
                     }
-                }
-            })?;
-            canvas.clear();
-            canvas.copy(texture, None, None)?;
-            canvas.present();
-        }
+                })?;
+                canvas.clear();
+                canvas.copy(texture, None, None)?;
+                canvas.present();
+            }
 
-        // update window texture
-        if let Some((ref mut canvas, ref mut texture)) = window_canvas_and_texture {
-            let window = cpu.mmu.ppu_as_ref().dbg_resolve_window();
-            let window = window
-                .iter()
-                .map(|line| line.as_slice())
-                .collect::<Vec<_>>();
-            update_canvas(canvas, texture, &window)?;
-        }
+            // update window texture
+            if let Some((ref mut canvas, ref mut texture)) = window_canvas_and_texture {
+                let window = cpu.mmu.ppu_as_ref().dbg_resolve_window();
+                let window = window
+                    .iter()
+                    .map(|line| line.as_slice())
+                    .collect::<Vec<_>>();
+                update_canvas(canvas, texture, &window)?;
+            }
 
-        let lcd = cpu.mmu.ppu_as_ref().lcd_display;
-        let lcd: Vec<_> = lcd.iter().map(|line| line.as_slice()).collect();
-        update_canvas(&mut lcd_canvas, &mut lcd_texture, &lcd)?;
+            // update main display
+            let lcd: [[Color; 160]; 144] = cpu.mmu.ppu_as_ref().lcd_display;
+            let lcd: Vec<_> = lcd.iter().map(|line| line.as_slice()).collect();
+            update_canvas(&mut lcd_canvas, &mut lcd_texture, &lcd)?;
+        }
 
         // Sleep to maintain frame rate, if requested
         if sleep_enabled {
@@ -346,14 +357,16 @@ fn execute_rom(
         }
     }
 
-    /// Original" Game Boy green (more authentic)
+    /// original Game Boy green
+    #[inline(always)]
     fn color_to_sdl_buf_values_dmg(color: Color) -> [u8; 3] {
-        match color {
-            Color::White => [224, 248, 208],
-            Color::LightGray => [136, 192, 112],
-            Color::DarkGray => [52, 104, 86],
-            Color::Black => [8, 24, 32],
-        }
+        static COLOR_LOOKUP: [[u8; 3]; 4] = [
+            [224, 248, 208], // White
+            [136, 192, 112], // LightGray
+            [52, 104, 86],   // DarkGray
+            [8, 24, 32],     // Black
+        ];
+        COLOR_LOOKUP[color as usize]
     }
 
     fn update_canvas(
