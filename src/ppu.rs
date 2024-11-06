@@ -72,7 +72,6 @@ pub struct Ppu {
 
 impl Ppu {
     pub(crate) fn new() -> Self {
-        // TODO: check that enums are initialized to correct values
         Self {
             vram_tile_data: VRamTileData {
                 tile_data_blocks: [[Tile {
@@ -301,7 +300,6 @@ impl Ppu {
         obj_attr_memory: &[ObjectAttributes; 40],
         obj_palettes: [ColorPalette; 2],
     ) -> [Color; 160] {
-        // TODO: should the line be all white, when bg is disabled?
         let mut result = [if bg_enabled {
             Color::Black
         } else {
@@ -597,7 +595,6 @@ impl Ppu {
 
         // an objects x position (obj.x_pos) is its horizontal position on the lcd screen + 8
         // an off screen value of x = 0 or x >= 168 hides the object
-        // todo handle tall objects
         for obj in self.obj_attribute_memory {
             let mut tile = self
                 .vram_tile_data

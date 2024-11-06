@@ -454,7 +454,6 @@ impl MemoryBus for Mmu {
                 self.ppu.lyc = byte;
             }
             0xFF46 => {
-                // TODO: This would be more performant if we write directly to the oam attributes array in the PPU
                 // Perform OAM DMA transfer.
                 // DMA on the real system takes 160 µs to complete.
                 // This implementation doesn't simulate the DMA timing.

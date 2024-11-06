@@ -19,7 +19,6 @@ pub enum ImeState {
 }
 
 pub struct Cpu {
-    // TODO: remove pub
     pub regs: Registers,
     pub mmu: Box<dyn MemoryBus>,
     /// AKA, the `IME` flag.
@@ -166,7 +165,6 @@ impl Cpu {
             0xF3 => self.di(),
             0xFB => self.ei(),
             0xCB => {
-                // TODO remember to account for prefix instruction when counting cycles
                 let opcode = self.mmu.read_byte(self.regs.pc);
                 // self.regs.pc += 1;
                 self.regs.pc = self.regs.pc.wrapping_add(1);
