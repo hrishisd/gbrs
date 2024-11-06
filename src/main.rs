@@ -3,6 +3,7 @@ use std::thread;
 use std::time::{self};
 
 use enumset::EnumSet;
+use gbrs::ppu::DisplayLine;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -322,8 +323,10 @@ fn execute_rom(
             }
 
             // update main display
-            let lcd: [[Color; 160]; 144] = cpu.mmu.ppu_as_ref().lcd_display;
-            let lcd: Vec<_> = lcd.iter().map(|line| line.as_slice()).collect();
+            let lcd: [DisplayLine; 144] = cpu.mmu.ppu_as_ref().lcd_display;
+            let lcd: [Vec<Color>; 144] =
+                lcd.map(|line| (0..160).map(|idx| line.pixel_at(idx)).collect());
+            let lcd: Vec<&[Color]> = lcd.iter().map(|line| line.as_slice()).collect();
             update_canvas(&mut lcd_canvas, &mut lcd_texture, &lcd)?;
         }
 

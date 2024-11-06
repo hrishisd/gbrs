@@ -1,5 +1,4 @@
-use core::panic;
-use std::{assert_matches::assert_matches, time::Instant};
+use std::assert_matches::assert_matches;
 
 use enumset::EnumSet;
 
@@ -7,7 +6,7 @@ use crate::{mmu::InterruptKind, util::U8Ext};
 
 #[derive(Debug, Clone)]
 pub struct Ppu {
-    pub lcd_display: [[Color; 160]; 144],
+    pub lcd_display: [DisplayLine; 144],
     pub vram_tile_data: VRamTileData,
     /// At address 0x9800
     pub lo_tile_map: TileMap,
@@ -65,9 +64,6 @@ pub struct Ppu {
     pub lyc: u8,
     /// LCD status register
     pub lcd_status: LcdStatus,
-
-    //debugging
-    pub last_viewport_update: std::time::Instant,
 }
 
 impl Ppu {
@@ -115,8 +111,7 @@ impl Ppu {
                 x_flip: false,
                 palette: ObjColorPaletteIdx::Zero,
             }; 40],
-            lcd_display: [[Color::Black; 160]; 144],
-            last_viewport_update: Instant::now(),
+            lcd_display: [DisplayLine::black_line(); 144],
         }
     }
 
@@ -299,19 +294,19 @@ impl Ppu {
         obj_size: ObjSize,
         obj_attr_memory: &[ObjectAttributes; 40],
         obj_palettes: [ColorPalette; 2],
-    ) -> [Color; 160] {
-        let mut result = [if bg_enabled {
-            Color::Black
+    ) -> DisplayLine {
+        let mut result = if bg_enabled {
+            DisplayLine::black_line()
         } else {
-            Color::White
-        }; 160];
+            DisplayLine::white_line()
+        };
         // Preserve the color ids while drawing the background and window to resolve priority when drawing objects
         let mut bg_line_color_ids = [ColorId::Id0; 160];
         if bg_enabled {
             // the index of the line being drawn in the 256x256 background coordinate system
             let bg_row: u8 = bg_viewport_offset.y.wrapping_add(lcd_line);
             for lcd_col in 0..160 {
-                let bg_col: u8 = bg_viewport_offset.x.wrapping_add(lcd_col as u8);
+                let bg_col: u8 = bg_viewport_offset.x.wrapping_add(lcd_col);
                 // bg_row and bg_col represent the position of a pixel in the 256x256 background layer
                 // Now we need to find the corresponding color id for this pixel in the background map
                 let pixel_color_id = {
@@ -326,8 +321,8 @@ impl Ppu {
                     };
                     tile.lines[bg_row as usize % 8].color_ids()[bg_col as usize % 8]
                 };
-                result[lcd_col] = bg_and_window_palette.lookup(pixel_color_id);
-                bg_line_color_ids[lcd_col] = pixel_color_id;
+                result.set_pixel(lcd_col, bg_and_window_palette.lookup(pixel_color_id));
+                bg_line_color_ids[lcd_col as usize] = pixel_color_id;
             }
         }
         // the window is only visible if both the window and background are enabled, and the window offset falls within the ranges WX=0..166, WY=0..143
@@ -359,8 +354,8 @@ impl Ppu {
                         };
                         tile.lines[window_row % 8].color_ids()[window_col % 8]
                     };
-                    result[lcd_col] = bg_and_window_palette.lookup(pixel_color_id);
-                    bg_line_color_ids[lcd_col] = pixel_color_id
+                    result.set_pixel(lcd_col, bg_and_window_palette.lookup(pixel_color_id));
+                    bg_line_color_ids[lcd_col as usize] = pixel_color_id
                 }
             }
         }
@@ -419,18 +414,18 @@ impl Ppu {
                     let lcd_col_idx = obj.x_pos as i16 - 8 + pixel_idx as i16;
                     // Only draw if this pixel of object appears on the display
                     if (0..160).contains(&lcd_col_idx) {
-                        let lcd_col_idx = lcd_col_idx as usize;
+                        let lcd_col_idx = lcd_col_idx as u8;
                         let is_transparent = pixel_color_id == ColorId::Id0;
                         if !is_transparent
                             // Draw if the bg does not have priority over the object
                             && (obj.bg_over_obj_priority == Priority::Zero
-                                || bg_line_color_ids[lcd_col_idx] == ColorId::Id0)
+                                || bg_line_color_ids[lcd_col_idx as usize] == ColorId::Id0)
                         {
                             let palette = obj_palettes[match obj.palette {
                                 ObjColorPaletteIdx::Zero => 0,
                                 ObjColorPaletteIdx::One => 1,
                             }];
-                            result[lcd_col_idx] = palette.lookup(pixel_color_id);
+                            result.set_pixel(lcd_col_idx, palette.lookup(pixel_color_id));
                         }
                     }
                 }
@@ -440,7 +435,7 @@ impl Ppu {
     }
 
     /// Resolve pixel values for a line of the LCD display
-    fn draw_scan_line(&self) -> [Color; 160] {
+    fn draw_scan_line(&self) -> DisplayLine {
         Ppu::draw_scan_line_internal(
             &self.vram_tile_data,
             self.line,
@@ -637,6 +632,66 @@ impl Ppu {
             grid[160][x] = Color::Black;
         }
         grid
+    }
+}
+
+/// A packed representation of the colors within a line
+/// Each byte represents 4 pixels
+/// The 0th byte represents the 4 left-most pixels
+/// The two left-most bits of the 0th byte represent the color of the first pixel
+#[derive(Clone, Copy)]
+pub struct DisplayLine([u8; 40]);
+
+impl std::fmt::Debug for DisplayLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries((0..160).map(|idx| self.pixel_at(idx)))
+            .finish()
+    }
+}
+
+impl DisplayLine {
+    pub fn pixel_at(&self, idx: u8) -> Color {
+        assert_matches!(
+            idx,
+            0..=159,
+            "Out of range idx while indexing into display line: {idx}"
+        );
+        let byte_idx = idx >> 2;
+        let byte = (&self.0)[byte_idx as usize];
+
+        let idx_of_color_in_byte = 3 - idx % 4;
+        let color_bits = (byte >> (2 * idx_of_color_in_byte)) & 0b11;
+        Color::from_be_bits([color_bits.bit(1), color_bits.bit(0)])
+    }
+
+    fn set_pixel(&mut self, idx: u8, color: Color) {
+        assert_matches!(
+            idx,
+            0..=159,
+            "Out of range idx while indexing into display line: {idx}"
+        );
+        let byte_idx = idx >> 2;
+        let mut byte = (&self.0)[byte_idx as usize];
+
+        // the index of the color within the byte from left to right
+        // idx%4 of 0 means we want the left-most pixel in the byte, with 2-bit-idx of 3
+        // idx%4 of 3 means we want the right-most pixel in the byte, with 2-bit-idx of 0
+        let color_idx = 3 - (idx % 4);
+
+        // clear the corresponding color of the byte
+        byte &= 0b1111_1100u8.rotate_left(2 * color_idx as u32);
+        // updat the color at that position in the byte
+        let color_mask = (color as u8) << (2 * color_idx);
+        byte |= color_mask;
+        (&mut self.0)[byte_idx as usize] = byte
+    }
+
+    fn black_line() -> Self {
+        DisplayLine([0xFF; 40])
+    }
+    fn white_line() -> Self {
+        DisplayLine([0x00; 40])
     }
 }
 
@@ -1017,7 +1072,40 @@ pub enum Priority {
 
 #[cfg(test)]
 mod tests {
+
+    use proptest::{prop_assert_eq, proptest};
+
     use super::*;
+
+    proptest! {
+        #[test]
+        fn display_line_roundtrip(color_id in 0..4, pixel_idx in 0..160u8) {
+            let colors = [
+                Color::White,
+                Color::LightGray,
+                Color::DarkGray,
+                Color::Black,
+            ];
+            let mut line = DisplayLine::black_line();
+            let color = colors[color_id as usize % 4];
+            line.set_pixel(pixel_idx, color);
+            prop_assert_eq!(line.pixel_at(pixel_idx), color);
+            prop_assert_eq!(&line.colors()[..pixel_idx as usize], &vec![Color::Black;pixel_idx as usize]);
+            prop_assert_eq!(&line.colors()[pixel_idx as usize+1..], &vec![Color::Black;160-pixel_idx as usize-1])
+        }
+    }
+
+    #[test]
+    fn display_line_round_trip() {
+        use Color::*;
+        let mut line = DisplayLine::black_line();
+        line.set_pixel(0, LightGray);
+        line.set_pixel(1, DarkGray);
+        line.set_pixel(2, White);
+        assert_eq!(line.pixel_at(0), LightGray);
+        assert_eq!(line.pixel_at(1), DarkGray);
+        assert_eq!(line.pixel_at(2), White);
+    }
 
     #[test]
     fn tile_idx_calculation() {
@@ -1146,22 +1234,22 @@ mod tests {
 
         // The first row of the LCD should be 8 white pixels followed by 152 light gray pixels
         let lcd_row = ppu.draw_scan_line();
-        assert_eq!(lcd_row[..8], [Color::White; 8]);
-        assert_eq!(lcd_row[8..], [Color::LightGray; 152]);
+        assert_eq!(lcd_row.colors()[..8], [Color::White; 8]);
+        assert_eq!(lcd_row.colors()[8..], [Color::LightGray; 152]);
 
         // move the viewport to the right by 1 pixel
         ppu.viewport_offset.x = 1;
         // Now the first row of the LCD should be 7 white pixels followed by 152 light gray pixels
         let lcd_row = ppu.draw_scan_line();
-        assert_eq!(lcd_row[..7], [Color::White; 7]);
-        assert_eq!(lcd_row[7..], [Color::LightGray; 153]);
+        assert_eq!(lcd_row.colors()[..7], [Color::White; 7]);
+        assert_eq!(lcd_row.colors()[7..], [Color::LightGray; 153]);
 
         // we should get the same line even as we scroll the viewport down up to line 7, because each row of tiles 1 and 2 is identical
         for y_offset in 1..7 {
             let lcd_row = ppu.draw_scan_line();
             ppu.viewport_offset.y = y_offset;
-            assert_eq!(lcd_row[..7], [Color::White; 7]);
-            assert_eq!(lcd_row[7..], [Color::LightGray; 153]);
+            assert_eq!(lcd_row.colors()[..7], [Color::White; 7]);
+            assert_eq!(lcd_row.colors()[7..], [Color::LightGray; 153]);
         }
 
         // now fill the second tile row in the background map with 1 dark gray tile followed by 31 black tiles
@@ -1172,8 +1260,8 @@ mod tests {
         // we are now drawing line 5 of the LCD screen, which is offset 3 from the top of the background map
         // This should display the second row of tiles
         let lcd_row = ppu.draw_scan_line();
-        assert_eq!(lcd_row[..8], [Color::DarkGray; 8]);
-        assert_eq!(lcd_row[8..], [Color::Black; 152]);
+        assert_eq!(lcd_row.colors()[..8], [Color::DarkGray; 8]);
+        assert_eq!(lcd_row.colors()[8..], [Color::Black; 152]);
     }
 
     #[test]
@@ -1221,17 +1309,17 @@ mod tests {
         };
         // first, at position 0,0, the object should be invisible
         let line = ppu.draw_scan_line();
-        assert_eq!(line, [Color::White; 160]);
+        assert_eq!(line.colors(), [Color::White; 160]);
 
         // now, make the object visible by moving it down 9 rows and to the right 1 column
         ppu.obj_attribute_memory[0].y_pos = 9;
         ppu.obj_attribute_memory[0].x_pos = 1;
         let line = ppu.draw_scan_line();
-        assert_eq!(line[0], Color::DarkGray);
+        assert_eq!(line.colors()[0], Color::DarkGray);
         // The rest of the screen should still be blank
-        assert_eq!(line[1..], [Color::White; 159]);
+        assert_eq!(line.colors()[1..], [Color::White; 159]);
         ppu.line = 1;
-        assert_eq!(ppu.draw_scan_line(), [Color::White; 160]);
+        assert_eq!(ppu.draw_scan_line().colors(), [Color::White; 160]);
 
         // Now, flip the object vertically and render the last line of the object on the first line of the lcd
         ppu.line = 0;
@@ -1240,22 +1328,22 @@ mod tests {
         ppu.obj_attribute_memory[0].y_flip = true;
 
         let line = ppu.draw_scan_line();
-        assert_eq!(line[..4], [Color::White; 4]);
-        assert_eq!(line[4..8], [Color::LightGray; 4]);
-        assert_eq!(line[8..], [Color::White; 152]);
+        assert_eq!(line.colors()[..4], [Color::White; 4]);
+        assert_eq!(line.colors()[4..8], [Color::LightGray; 4]);
+        assert_eq!(line.colors()[8..], [Color::White; 152]);
 
         // Now flip the object horizontally and vertically and render the last line of the object
         ppu.obj_attribute_memory[0].x_flip = true;
         let line = ppu.draw_scan_line();
-        assert_eq!(line[..4], [Color::LightGray; 4]);
-        assert_eq!(line[4..], [Color::White; 156]);
+        assert_eq!(line.colors()[..4], [Color::LightGray; 4]);
+        assert_eq!(line.colors()[4..], [Color::White; 156]);
 
         // Now unflip the object vertically and render the last line of the object
         ppu.obj_attribute_memory[0].y_flip = false;
         let line = ppu.draw_scan_line();
-        assert_eq!(line[..4], [Color::DarkGray; 4]);
-        assert_eq!(line[4..8], [Color::Black; 4]);
-        assert_eq!(line[8..], [Color::White; 152]);
+        assert_eq!(line.colors()[..4], [Color::DarkGray; 4]);
+        assert_eq!(line.colors()[4..8], [Color::Black; 4]);
+        assert_eq!(line.colors()[8..], [Color::White; 152]);
     }
 
     #[test]
@@ -1324,33 +1412,33 @@ mod tests {
         };
         // first, at position 0,0, the object should be invisible
         let line = ppu.draw_scan_line();
-        assert_eq!(line, [Color::White; 160]);
+        assert_eq!(line.colors(), [Color::White; 160]);
 
         // now, make the object visible by moving it down a single row row and to the right 8 columns
         ppu.obj_attribute_memory[0].y_pos = 1;
         ppu.obj_attribute_memory[0].x_pos = 8;
         let line = ppu.draw_scan_line();
-        assert_eq!(line[..8], [Color::LightGray; 8]);
+        assert_eq!(line.colors()[..8], [Color::LightGray; 8]);
         // The rest of the screen should still be black
-        assert_eq!(line[8..], [Color::White; 152]);
+        assert_eq!(line.colors()[8..], [Color::White; 152]);
         ppu.line = 1;
-        assert_eq!(ppu.draw_scan_line(), [Color::White; 160]);
+        assert_eq!(ppu.draw_scan_line().colors(), [Color::White; 160]);
 
         // Now flip the object vertically and rerender the first line of the object
         ppu.obj_attribute_memory[0].y_flip = true;
         ppu.line = 0;
 
         let line = ppu.draw_scan_line();
-        assert_eq!(line[0], Color::LightGray);
-        assert_eq!(line[1..8], [Color::DarkGray; 7]);
-        assert_eq!(line[8..], [Color::White; 152]);
+        assert_eq!(line.colors()[0], Color::LightGray);
+        assert_eq!(line.colors()[1..8], [Color::DarkGray; 7]);
+        assert_eq!(line.colors()[8..], [Color::White; 152]);
 
         // Now flip the object horizontally and vertically and render the first line of the object
         ppu.obj_attribute_memory[0].x_flip = true;
         let line = ppu.draw_scan_line();
-        assert_eq!(line[..7], [Color::DarkGray; 7]);
-        assert_eq!(line[7], Color::LightGray);
-        assert_eq!(line[8..], [Color::White; 152]);
+        assert_eq!(line.colors()[..7], [Color::DarkGray; 7]);
+        assert_eq!(line.colors()[7], Color::LightGray);
+        assert_eq!(line.colors()[8..], [Color::White; 152]);
 
         // Now, keep the object flipped vertically, move it fully into the screen, and check its rendered correctly
         ppu.obj_attribute_memory[0].y_flip = true;
@@ -1358,17 +1446,27 @@ mod tests {
         ppu.obj_attribute_memory[0].y_pos = 16;
         ppu.line = 0;
         let top_line = ppu.draw_scan_line();
-        assert_eq!(top_line[..8], [Color::LightGray; 8]);
+        assert_eq!(top_line.colors()[..8], [Color::LightGray; 8]);
         ppu.line = 7;
         let first_tile_bottom_line = ppu.draw_scan_line();
-        assert_eq!(first_tile_bottom_line[0], Color::DarkGray);
-        assert_eq!(first_tile_bottom_line[1..8], [Color::LightGray; 7]);
+        assert_eq!(first_tile_bottom_line.pixel_at(0), Color::DarkGray);
+        assert_eq!(first_tile_bottom_line.colors()[1..8], [Color::LightGray; 7]);
         ppu.line = 8;
         let second_tile_top_line = ppu.draw_scan_line();
-        assert_eq!(second_tile_top_line[..8], [Color::DarkGray; 8]);
+        assert_eq!(second_tile_top_line.colors()[..8], [Color::DarkGray; 8]);
         ppu.line = 15;
         let second_tile_bottom_line = ppu.draw_scan_line();
-        assert_eq!(second_tile_bottom_line[0], Color::LightGray);
-        assert_eq!(second_tile_bottom_line[1..8], [Color::DarkGray; 7]);
+        assert_eq!(second_tile_bottom_line.pixel_at(0), Color::LightGray);
+        assert_eq!(second_tile_bottom_line.colors()[1..8], [Color::DarkGray; 7]);
+    }
+
+    impl DisplayLine {
+        fn colors(&self) -> [Color; 160] {
+            let mut result = [Color::White; 160];
+            for idx in 0..160 {
+                result[idx as usize] = self.pixel_at(idx);
+            }
+            result
+        }
     }
 }
