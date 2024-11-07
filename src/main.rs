@@ -218,6 +218,11 @@ fn execute_rom(
                         print_logs = true;
                     } else if key == Keycode::LShift {
                         fast_mode = true;
+                    } else if key == Keycode::S {
+                        match emu.dump_save_state() {
+                            Ok(_) => {}
+                            Err(e) => eprintln!("Failed to create save state: {e}"),
+                        };
                     }
                 }
                 Event::KeyUp {
