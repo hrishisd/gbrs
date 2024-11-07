@@ -206,10 +206,6 @@ fn execute_rom(
             match event {
                 Event::Quit { .. } => return Ok(()),
                 Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => return Ok(()),
-                Event::KeyDown {
                     keycode: Some(key), ..
                 } => {
                     if let Some(button) = keycode_to_button(key) {
