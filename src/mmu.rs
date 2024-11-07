@@ -1,4 +1,6 @@
 use enumset::{EnumSet, EnumSetType};
+use serde::{Deserialize, Serialize};
+use serde_big_array::BigArray;
 
 use crate::ppu::{
     self, BgAndWindowTileDataArea, ColorPalette, LcdStatus, ObjColorPaletteIdx, ObjSize, Ppu,
@@ -11,6 +13,7 @@ use cartridge::Cartridge;
 use core::panic;
 use joypad::Button;
 
+#[typetag::serde(tag = "memorybus")]
 pub trait MemoryBus {
     fn read_byte(&self, addr: u16) -> u8;
     fn write_byte(&mut self, addr: u16, byte: u8);
@@ -39,13 +42,14 @@ pub trait MemoryBus {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Mmu {
-    // rom_bank_0: [u8; 0x4000],
-    // rom_bank_n: [u8; 0x4000],
-    // ext_ram: [u8; 0x2000],
     cartridge: Box<dyn Cartridge>,
+    #[serde(with = "BigArray")]
     work_ram: [u8; 0x2000],
+    #[serde(with = "BigArray")]
     high_ram: [u8; 0x80],
+    #[serde(with = "BigArray")]
     boot_rom: [u8; 0x100],
     pub in_boot_rom: bool,
     pub ppu: Ppu,
@@ -108,6 +112,7 @@ impl Mmu {
     }
 }
 
+#[typetag::serde]
 impl MemoryBus for Mmu {
     fn read_byte(&self, addr: u16) -> u8 {
         match addr {
@@ -565,6 +570,7 @@ pub enum InterruptKind {
 }
 
 /// Configures whether the joypad register returns the state of the buttons or the direction keys.
+#[derive(Serialize, Deserialize)]
 enum JoypadSelect {
     All,
     Buttons,

@@ -1,23 +1,20 @@
-use std::{
-    fs::File,
-    io::{BufWriter, Write},
-};
-
 use opcode::{RstVec, CC};
 use register_file::{Registers, R16, R8};
+use serde::{Deserialize, Serialize};
 
 use crate::mmu::{InterruptKind, MemoryBus, Mmu};
 
 mod opcode;
 mod register_file;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImeState {
     Enabled,
     Disabled,
     PendingEnable,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Cpu {
     pub regs: Registers,
     pub mmu: Box<dyn MemoryBus>,
@@ -26,17 +23,15 @@ pub struct Cpu {
     /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
     pub ime: ImeState,
     pub is_halted: bool,
-    dbg_log_file: Option<BufWriter<File>>,
     print_cpu_logs: bool,
 }
 
 impl Cpu {
-    pub fn new(rom: &[u8], dbg_log_file: Option<BufWriter<File>>, print_cpu_logs: bool) -> Self {
+    pub fn new(rom: &[u8], print_cpu_logs: bool) -> Self {
         let mut cpu = Cpu {
             regs: Registers::create(),
             mmu: Box::new(Mmu::new(rom)),
             ime: ImeState::Disabled,
-            dbg_log_file,
             is_halted: false,
             print_cpu_logs,
         };
@@ -45,11 +40,7 @@ impl Cpu {
     }
 
     /// Initializes the CPU's state to the state it should have immediately after executing the boot ROM
-    pub fn new_post_boot(
-        test_rom: &[u8],
-        dbg_log_file: Option<BufWriter<File>>,
-        print_cpu_logs: bool,
-    ) -> Self {
+    pub fn new_post_boot(test_rom: &[u8], print_cpu_logs: bool) -> Self {
         let mut cpu = Cpu {
             regs: Registers {
                 a: 0x01,
@@ -65,7 +56,6 @@ impl Cpu {
             },
             mmu: Box::new(Mmu::new_post_boot(test_rom)),
             ime: ImeState::Disabled,
-            dbg_log_file,
             is_halted: false,
             print_cpu_logs,
         };
@@ -74,14 +64,6 @@ impl Cpu {
     }
 
     fn log_state(&mut self) {
-        if let Some(file) = &mut self.dbg_log_file {
-            writeln!(
-                file,
-                    "A:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-                    self.regs.a, self.regs.f, self.regs.b, self.regs.c, self.regs.d, self.regs.e, self.regs.h, self.regs.l, self.regs.sp, self.regs.pc, self.mmu.read_byte(self.regs.pc), self.mmu.read_byte(self.regs.pc+1), self.mmu.read_byte(self.regs.pc+2), self.mmu.read_byte(self.regs.pc+3)
-            )
-                .unwrap();
-        }
         if self.print_cpu_logs {
             println!(
                 "IME: {:?} HALTED: {:?}, IE: {:?}, IF: {:?}\nA:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
@@ -736,13 +718,13 @@ impl Cpu {
 #[cfg(test)]
 mod test {
     use crate::mmu::MemoryBus;
+    use serde_big_array::BigArray;
 
     use super::Cpu;
     use enumset::EnumSet;
     use serde::{Deserialize, Serialize};
     use std::{
         fs,
-        io::BufWriter,
         path::{self},
     };
 
@@ -750,32 +732,9 @@ mod test {
     #[test]
     fn run_boot_rom() {
         let boot_rom = include_bytes!("../roms/dmg_boot.bin");
-        let mut cpu = Cpu::new(boot_rom, None, false);
+        let mut cpu = Cpu::new(boot_rom, false);
         while cpu.regs.pc != 0x100 {
             cpu.step();
-        }
-    }
-
-    #[ignore]
-    #[test]
-    fn test_debug_rom() {
-        let file = std::fs::File::create("out.txt").unwrap();
-        eprintln!("Writing to file: {:?}", file);
-        let file = BufWriter::with_capacity(1, file);
-        // let file = BufWriter::new(file);
-        let test_rom =
-            include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/02-interrupts.gb");
-        // include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb");
-        // include_bytes!("../roms/gb-test-roms/cpu_instrs/individual/11-op a,(hl).gb");
-        let mut cpu = Cpu::new_post_boot(test_rom, Some(file), false);
-        let mut line = 1;
-        loop {
-            println!("L: {}", line);
-            line += 1;
-            cpu.step();
-            // if line == 152040 {
-            //     break;
-            // }
         }
     }
 
@@ -812,10 +771,13 @@ mod test {
         terminal: Sm83State,
     }
 
+    #[derive(Serialize, Deserialize)]
     struct ByteArrayMmu {
+        #[serde(with = "BigArray")]
         memory: [u8; 0x10000],
     }
 
+    #[typetag::serde]
     impl MemoryBus for ByteArrayMmu {
         fn read_byte(&self, addr: u16) -> u8 {
             self.memory[addr as usize]
@@ -897,7 +859,7 @@ mod test {
 
     impl Cpu {
         fn from_state(state: &Sm83State) -> Self {
-            let mut cpu = Cpu::new(&[0x00; 0x8000], None, false);
+            let mut cpu = Cpu::new(&[0x00; 0x8000], false);
             cpu.mmu = Box::new(ByteArrayMmu {
                 memory: [0; 0x10000],
             });

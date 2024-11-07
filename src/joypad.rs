@@ -1,6 +1,7 @@
 use enumset::EnumSetType;
+use serde::Serialize;
 
-#[derive(Debug, EnumSetType)]
+#[derive(Debug, EnumSetType, Serialize)]
 #[enumset(repr = "u8")]
 pub enum Button {
     A,

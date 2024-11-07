@@ -1,3 +1,9 @@
+use std::time::{Duration, SystemTime};
+
+use serde::{Deserialize, Serialize};
+use serde_big_array::BigArray;
+
+#[typetag::serde(tag = "cartridge")]
 pub trait Cartridge {
     fn read(&self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, byte: u8);
@@ -6,8 +12,11 @@ pub trait Cartridge {
 /// Small games of not more than 32 KiB ROM do not require a MBC chip for ROM banking.
 /// The ROM is directly mapped to memory at $0000-7FFF.
 /// Optionally up to 8 KiB of RAM could be connected at $A000-BFFF.
+#[derive(Serialize, Deserialize)]
 pub struct NoMbc {
+    #[serde(with = "BigArray")]
     rom: [u8; 0x8000],
+    #[serde(with = "BigArray")]
     ext_ram: [u8; 0x2000],
 }
 
@@ -26,6 +35,7 @@ impl NoMbc {
     }
 }
 
+#[typetag::serde]
 impl Cartridge for NoMbc {
     fn read(&self, addr: u16) -> u8 {
         match addr {
@@ -44,19 +54,13 @@ impl Cartridge for NoMbc {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Mbc1 {
-    rom_banks: Vec<[u8; 0x4000]>,
+    rom_banks: Vec<RomBank>,
     rom_bank_idx: usize,
-    ram_banks: Vec<[u8; 0x2000]>,
+    ram_banks: Vec<RamBank>,
     ram_bank_idx: usize,
     ram_enable: bool,
-    _bank_mode_select: BankModeSelect,
-}
-
-#[allow(dead_code)]
-enum BankModeSelect {
-    ExtendedROMBanking,
-    RAMBanking,
 }
 
 impl Mbc1 {
@@ -64,7 +68,7 @@ impl Mbc1 {
         let rom_size_byte = rom[0x0148];
         assert!((0x00..=0x08).contains(&rom_size_byte));
         let num_banks = 2 * (1 << rom_size_byte);
-        let mut rom_banks = vec![[0; 0x4000]; num_banks];
+        let mut rom_banks = vec![RomBank([0; 0x4000]); num_banks];
         assert_eq!(
             rom.len(),
             num_banks * (0x4000),
@@ -72,7 +76,9 @@ impl Mbc1 {
         );
         for idx in 0..rom_banks.len() {
             let bank_size = 0x4000;
-            rom_banks[idx].copy_from_slice(&rom[idx * bank_size..((idx + 1) * bank_size)]);
+            rom_banks[idx]
+                .0
+                .copy_from_slice(&rom[idx * bank_size..((idx + 1) * bank_size)]);
         }
 
         let ram_size_byte = rom[0x0149];
@@ -81,10 +87,10 @@ impl Mbc1 {
                 vec![]
             }
             0x02 => {
-                vec![[0u8; 0x2000]; 1]
+                vec![RamBank([0u8; 0x2000]); 1]
             }
             0x03 => {
-                vec![[0u8; 0x2000]; 4]
+                vec![RamBank([0u8; 0x2000]); 4]
             }
             _ => {
                 panic!("Unexpected RAM size for MBC 1: {:X}", ram_size_byte)
@@ -97,19 +103,21 @@ impl Mbc1 {
             rom_bank_idx: 1,
             ram_bank_idx: 0,
             ram_enable: false,
-            _bank_mode_select: BankModeSelect::RAMBanking,
         }
     }
 }
 
+#[typetag::serde]
 impl Cartridge for Mbc1 {
     fn read(&self, addr: u16) -> u8 {
         match addr {
-            0x0000..=0x3FFF => self.rom_banks[0][addr as usize],
-            0x4000..=0x7FFF => self.rom_banks[self.rom_bank_idx][(addr - 0x4000) as usize],
+            0x0000..=0x3FFF => self.rom_banks[0].as_slice()[addr as usize],
+            0x4000..=0x7FFF => {
+                self.rom_banks[self.rom_bank_idx].as_slice()[(addr - 0x4000) as usize]
+            }
             0xA000..=0xBFFF => {
                 if self.ram_enable {
-                    self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000]
+                    self.ram_banks[self.ram_bank_idx].as_slice()[addr as usize - 0xA000]
                 } else {
                     0xFF
                 }
@@ -142,7 +150,7 @@ impl Cartridge for Mbc1 {
             }
             0xA000..=0xBFFF => {
                 if self.ram_enable {
-                    self.ram_banks[self.ram_bank_idx][addr as usize - 0xA000] = byte;
+                    self.ram_banks[self.ram_bank_idx].as_mut_slice()[addr as usize - 0xA000] = byte;
                 }
             }
             _ => panic!("Illegal write to cartridge: {} <- {}", addr, byte),
@@ -151,6 +159,7 @@ impl Cartridge for Mbc1 {
 }
 
 /// Either RAM/clock is disabled, or we have mapped in a ram bank, or we have mapped a clock register.
+#[derive(Serialize, Deserialize)]
 enum RamBankOrRtcSelect {
     Ram { idx: u8 },
     Seconds,
@@ -161,13 +170,13 @@ enum RamBankOrRtcSelect {
 }
 
 /// Controls when the clock data is latched to the clock registers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum LatchState {
     Latched,
     Staged,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RealTimeClockRegisters {
     seconds: u8,  // 0-59
     minutes: u8,  // 0-59
@@ -175,12 +184,16 @@ struct RealTimeClockRegisters {
     days_low: u8, // Lower 8 bits of day counter
     days_hi_bit: bool,
     day_counter_carry: bool,
-    last_update_time: std::time::Instant,
+    // We use system time instead of Instant because Instant is opaque and not serializable.
+    last_update_time: SystemTime,
 }
 impl RealTimeClockRegisters {
     fn update(&mut self) {
-        let now = std::time::Instant::now();
-        let elapsed = now.duration_since(self.last_update_time).as_secs();
+        let now = SystemTime::now();
+        let elapsed = now
+            .duration_since(self.last_update_time)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
         if elapsed == 0 {
             return;
         }
@@ -209,10 +222,11 @@ impl RealTimeClockRegisters {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Mbc3 {
-    rom_banks: Vec<[u8; 0x4000]>,
+    rom_banks: Vec<RomBank>,
     rom_bank_idx: usize,
-    ram_banks: Vec<[u8; 0x2000]>,
+    ram_banks: Vec<RamBank>,
     enable_ram_and_rtc: bool,
     ram_bank_or_rtc_select: RamBankOrRtcSelect,
     clock_registers: RealTimeClockRegisters,
@@ -232,10 +246,12 @@ impl Mbc3 {
             num_banks * (0x4000),
             "ROM should be num banks * 16 KiB"
         );
-        let mut rom_banks = vec![[0; 0x4000]; num_banks];
+        let mut rom_banks = vec![RomBank([0; 0x4000]); num_banks];
         for idx in 0..rom_banks.len() {
             let bank_size = 0x4000;
-            rom_banks[idx].copy_from_slice(&rom[idx * bank_size..((idx + 1) * bank_size)]);
+            rom_banks[idx]
+                .0
+                .copy_from_slice(&rom[idx * bank_size..((idx + 1) * bank_size)]);
         }
 
         let ram_size_byte = rom[0x0149];
@@ -244,10 +260,10 @@ impl Mbc3 {
                 vec![]
             }
             0x02 => {
-                vec![[0u8; 0x2000]; 1]
+                vec![RamBank([0u8; 0x2000]); 1]
             }
             0x03 => {
-                vec![[0u8; 0x2000]; 4]
+                vec![RamBank([0u8; 0x2000]); 4]
             }
             _ => {
                 panic!("Unexpected RAM size for MBC 1: {:X}", ram_size_byte)
@@ -266,7 +282,7 @@ impl Mbc3 {
                 days_low: 0,
                 days_hi_bit: false,
                 day_counter_carry: false,
-                last_update_time: std::time::Instant::now(),
+                last_update_time: SystemTime::now(),
             },
             enable_ram_and_rtc: false,
             latch_state: LatchState::Latched,
@@ -274,16 +290,17 @@ impl Mbc3 {
     }
 }
 
+#[typetag::serde]
 impl Cartridge for Mbc3 {
     fn read(&self, addr: u16) -> u8 {
         match addr {
-            0x0000..=0x3FFF => self.rom_banks[0][addr as usize],
-            0x4000..=0x7FFF => self.rom_banks[self.rom_bank_idx][addr as usize - 0x4000],
+            0x0000..=0x3FFF => self.rom_banks[0].as_slice()[addr as usize],
+            0x4000..=0x7FFF => self.rom_banks[self.rom_bank_idx].as_slice()[addr as usize - 0x4000],
             0xA000..=0xBFFF => {
                 if self.enable_ram_and_rtc {
                     match self.ram_bank_or_rtc_select {
                         RamBankOrRtcSelect::Ram { idx } => {
-                            self.ram_banks[idx as usize][addr as usize - 0xA000]
+                            self.ram_banks[idx as usize].as_slice()[addr as usize - 0xA000]
                         }
                         RamBankOrRtcSelect::Seconds => self.clock_registers.seconds,
                         RamBankOrRtcSelect::Minutes => self.clock_registers.minutes,
@@ -351,7 +368,8 @@ impl Cartridge for Mbc3 {
                 if self.enable_ram_and_rtc {
                     match self.ram_bank_or_rtc_select {
                         RamBankOrRtcSelect::Ram { idx } => {
-                            self.ram_banks[idx as usize][addr as usize - 0xA000] = byte;
+                            self.ram_banks[idx as usize].as_mut_slice()[addr as usize - 0xA000] =
+                                byte;
                         }
                         // TODO: implement writes to clock register
                         RamBankOrRtcSelect::Seconds => {
@@ -375,5 +393,26 @@ impl Cartridge for Mbc3 {
             }
             _ => panic!("Illegal write to cartridge: {} <- {}", addr, byte),
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RomBank(#[serde(with = "BigArray")] pub [u8; 0x4000]);
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RamBank(#[serde(with = "BigArray")] pub [u8; 0x2000]);
+impl RomBank {
+    fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl RamBank {
+    fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.0
     }
 }

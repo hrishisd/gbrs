@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 /// The state of the cpu registers
 ///
 /// There are 8 8-bit registers (A, F, B, C, D, E, H, L) and two 16-bit registers (SP and PC)
@@ -7,7 +9,7 @@
 /// The A register is the accumulator register.
 /// The F register is the flags register and is not directly accessible.
 /// Instead, the upper 4 bits are used to store flags from the results of math operations.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Registers {
     pub a: u8,
     pub f: u8,

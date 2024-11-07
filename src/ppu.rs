@@ -1,11 +1,14 @@
 use std::assert_matches::assert_matches;
 
 use enumset::EnumSet;
+use serde::{Deserialize, Serialize};
+use serde_big_array::BigArray;
 
 use crate::{mmu::InterruptKind, util::U8Ext};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ppu {
+    #[serde(with = "BigArray")]
     pub lcd_display: [DisplayLine; 144],
     pub vram_tile_data: VRamTileData,
     /// At address 0x9800
@@ -42,6 +45,7 @@ pub struct Ppu {
     /// OAM
     ///
     /// This is a sprite attribute table, 40 entries, 4 bytes each.
+    #[serde(with = "BigArray")]
     pub obj_attribute_memory: [ObjectAttributes; 40],
 
     /// BGP
@@ -70,9 +74,11 @@ impl Ppu {
     pub(crate) fn new() -> Self {
         Self {
             vram_tile_data: VRamTileData {
-                tile_data_blocks: [[Tile {
-                    lines: [TileLine { lsbs: 0, msbs: 0 }; 8],
-                }; 128]; 3],
+                tile_data_blocks: [TileBlock(
+                    [Tile {
+                        lines: [TileLine { lsbs: 0, msbs: 0 }; 8],
+                    }; 128],
+                ); 3],
             },
             lo_tile_map: TileMap {
                 tile_indices: [[0; 32]; 32],
@@ -123,7 +129,7 @@ impl Ppu {
                 let idx = TileByteIdx::from_addr(addr);
                 let tile = {
                     let block = &self.vram_tile_data.tile_data_blocks[idx.block_idx];
-                    &block[idx.tile_idx]
+                    &block.as_slice()[idx.tile_idx]
                 };
                 let line = tile.lines[idx.line_idx];
                 if idx.byte_idx % 2 == 0 {
@@ -157,7 +163,7 @@ impl Ppu {
                 let tile = {
                     let this = &mut *self;
                     let block = &mut this.vram_tile_data.tile_data_blocks[idx.block_idx];
-                    &mut block[idx.tile_idx]
+                    &mut block.as_mut_slice()[idx.tile_idx]
                 };
                 let line = &mut tile.lines[idx.line_idx];
                 if idx.byte_idx % 2 == 0 {
@@ -639,8 +645,8 @@ impl Ppu {
 /// Each byte represents 4 pixels
 /// The 0th byte represents the 4 left-most pixels
 /// The two left-most bits of the 0th byte represent the color of the first pixel
-#[derive(Clone, Copy)]
-pub struct DisplayLine([u8; 40]);
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub struct DisplayLine(#[serde(with = "BigArray")] [u8; 40]);
 
 impl std::fmt::Debug for DisplayLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -651,6 +657,14 @@ impl std::fmt::Debug for DisplayLine {
 }
 
 impl DisplayLine {
+    pub fn colors(&self) -> [Color; 160] {
+        let mut result = [Color::White; 160];
+        for idx in 0..160 {
+            result[idx as usize] = self.pixel_at(idx);
+        }
+        result
+    }
+
     pub fn pixel_at(&self, idx: u8) -> Color {
         assert_matches!(
             idx,
@@ -741,7 +755,7 @@ impl TileByteIdx {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub struct LcdStatus {
     ///  If set, selects the LYC == LY condition for the STAT interrupt
     pub lyc_int_select: bool,
@@ -753,18 +767,18 @@ pub struct LcdStatus {
     pub mode_0_int_select: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Position {
     pub x: u8,
     pub y: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TileMap {
     pub tile_indices: [[u8; 32]; 32],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TileMapArea {
     X9800,
     X9C00,
@@ -787,7 +801,7 @@ impl TileMapArea {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BgAndWindowTileDataArea {
     X8800,
     X8000,
@@ -802,7 +816,7 @@ impl BgAndWindowTileDataArea {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObjSize {
     Dim8x8,
     Dim8x16,
@@ -832,7 +846,7 @@ impl ObjSize {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Color {
     White = 0,
@@ -868,7 +882,7 @@ impl Color {
 }
 
 /// field i of the strict corresponds to the ith color id
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColorPalette(Color, Color, Color, Color);
 
 impl ColorPalette {
@@ -906,7 +920,7 @@ impl From<u8> for ColorPalette {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mode {
     /// Takes 80 clock cycles. While in this mode, the PPU fetches assets from memory
     ScanlineOAM,
@@ -920,9 +934,23 @@ pub enum Mode {
     VerticalBlank,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct TileBlock(#[serde(with = "BigArray")] [Tile; 128]);
+
+impl TileBlock {
+    fn as_slice(&self) -> &[Tile] {
+        &self.0
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [Tile] {
+        &mut self.0
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VRamTileData {
-    tile_data_blocks: [[Tile; 128]; 3],
+    #[serde(with = "BigArray")]
+    tile_data_blocks: [TileBlock; 3],
 }
 
 impl VRamTileData {
@@ -933,9 +961,9 @@ impl VRamTileData {
     /// idx 128 to 255 gets from block 1
     pub fn get_tile_from_0x8000(&self, idx: u8) -> Tile {
         if idx < 128 {
-            self.tile_data_blocks[0][idx as usize]
+            self.tile_data_blocks[0].as_slice()[idx as usize]
         } else {
-            self.tile_data_blocks[1][idx as usize % 128]
+            self.tile_data_blocks[1].as_slice()[idx as usize % 128]
         }
     }
 
@@ -947,21 +975,21 @@ impl VRamTileData {
     pub fn get_tile_from_0x8800_signed(&self, idx: u8) -> Tile {
         let idx = idx as i8;
         if idx >= 0 {
-            self.tile_data_blocks[2][idx as usize]
+            self.tile_data_blocks[2].as_slice()[idx as usize]
         } else {
-            self.tile_data_blocks[1][(idx as i16 + 128) as usize]
+            self.tile_data_blocks[1].as_slice()[(idx as i16 + 128) as usize]
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tile {
     /// `lines[0]` is the top-line
     pub lines: [TileLine; 8],
 }
 
 /// In both lsbs and msbs, bit 7 represents the left-most pixel and bit 0, the right-most
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TileLine {
     pub lsbs: u8,
     pub msbs: u8,
@@ -1005,7 +1033,7 @@ impl TileLine {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ColorId {
     Id0,
     Id1,
@@ -1013,7 +1041,7 @@ pub enum ColorId {
     Id3,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectAttributes {
     /// Object’s vertical position on the screen + 16.
     ///
@@ -1058,13 +1086,13 @@ impl ObjectAttributes {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObjColorPaletteIdx {
     Zero,
     One,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Priority {
     Zero,
     One,
@@ -1216,10 +1244,10 @@ mod tests {
         ppu.bg_and_window_tile_data_select = BgAndWindowTileDataArea::X8000;
         ppu.bg_tile_map_select = TileMapArea::X9800;
         // Create 4 tiles in VRAM in block 0 with different color IDs
-        ppu.vram_tile_data.tile_data_blocks[0][0] = mono_color_tile(ColorId::Id0);
-        ppu.vram_tile_data.tile_data_blocks[0][1] = mono_color_tile(ColorId::Id1);
-        ppu.vram_tile_data.tile_data_blocks[0][2] = mono_color_tile(ColorId::Id2);
-        ppu.vram_tile_data.tile_data_blocks[0][3] = mono_color_tile(ColorId::Id3);
+        ppu.vram_tile_data.tile_data_blocks[0].as_mut_slice()[0] = mono_color_tile(ColorId::Id0);
+        ppu.vram_tile_data.tile_data_blocks[0].as_mut_slice()[1] = mono_color_tile(ColorId::Id1);
+        ppu.vram_tile_data.tile_data_blocks[0].as_mut_slice()[2] = mono_color_tile(ColorId::Id2);
+        ppu.vram_tile_data.tile_data_blocks[0].as_mut_slice()[3] = mono_color_tile(ColorId::Id3);
         ppu.bg_color_palette = ColorPalette(
             Color::White,     // Tile 0
             Color::LightGray, // Tile 1
@@ -1297,7 +1325,7 @@ mod tests {
                 ],
             }
         };
-        ppu.vram_tile_data.tile_data_blocks[0][0] = obj_tile;
+        ppu.vram_tile_data.tile_data_blocks[0].as_mut_slice()[0] = obj_tile;
         ppu.obj_attribute_memory[0] = ObjectAttributes {
             y_pos: 0,
             x_pos: 0,
@@ -1399,8 +1427,8 @@ mod tests {
             }
         };
 
-        ppu.vram_tile_data.tile_data_blocks[0][0] = dark_tile;
-        ppu.vram_tile_data.tile_data_blocks[0][1] = light_tile;
+        ppu.vram_tile_data.tile_data_blocks[0].as_mut_slice()[0] = dark_tile;
+        ppu.vram_tile_data.tile_data_blocks[0].as_mut_slice()[1] = light_tile;
         ppu.obj_attribute_memory[0] = ObjectAttributes {
             y_pos: 0,
             x_pos: 0,
@@ -1458,15 +1486,5 @@ mod tests {
         let second_tile_bottom_line = ppu.draw_scan_line();
         assert_eq!(second_tile_bottom_line.pixel_at(0), Color::LightGray);
         assert_eq!(second_tile_bottom_line.colors()[1..8], [Color::DarkGray; 7]);
-    }
-
-    impl DisplayLine {
-        fn colors(&self) -> [Color; 160] {
-            let mut result = [Color::White; 160];
-            for idx in 0..160 {
-                result[idx as usize] = self.pixel_at(idx);
-            }
-            result
-        }
     }
 }

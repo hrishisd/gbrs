@@ -1137,7 +1137,7 @@ mod tests {
         // NOP
         // NOP
         // ...
-        let mut cpu = Cpu::new(&program, None, false);
+        let mut cpu = Cpu::new(&program, false);
         cpu.mmu.set_not_in_boot_rom();
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
@@ -1161,7 +1161,7 @@ mod tests {
         // EI
         // DI
         // NOP
-        let mut cpu = Cpu::new(&program, None, false);
+        let mut cpu = Cpu::new(&program, false);
         cpu.mmu.set_not_in_boot_rom();
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
@@ -1177,7 +1177,7 @@ mod tests {
         #[test]
         fn sub_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM, None, false);
+            let mut cpu = Cpu::new(&FAKE_ROM, false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1193,7 +1193,7 @@ mod tests {
         #[test]
         fn xor_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM,None, false);
+            let mut cpu = Cpu::new(&FAKE_ROM,false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1209,7 +1209,7 @@ mod tests {
         #[test]
         fn or_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM, None, false);
+            let mut cpu = Cpu::new(&FAKE_ROM, false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1225,7 +1225,7 @@ mod tests {
         #[test]
         fn and_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM, None, false);
+            let mut cpu = Cpu::new(&FAKE_ROM, false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1241,7 +1241,7 @@ mod tests {
         #[test]
         fn cp_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM,None, false);
+            let mut cpu = Cpu::new(&FAKE_ROM,false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
