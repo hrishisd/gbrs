@@ -3,15 +3,14 @@ use std::thread;
 use std::time::{self};
 
 use enumset::EnumSet;
-use gbrs::ppu::DisplayLine;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 
 use clap::Parser;
 
+use gbrs::joypad;
 use gbrs::Color;
-use gbrs::{cpu, joypad};
 
 /// CPU frequency from pandocs: https://gbdev.io/pandocs/Specifications.html#dmg_clk
 const CYCLES_PER_SECOND: u32 = 4194304;
@@ -29,16 +28,12 @@ const FRAME_DURATION: time::Duration = time::Duration::from_nanos(NANOS_PER_FRAM
     about = "My Game Boy emulator"
 )]
 struct Cli {
-    /// Path to the ROM file
-    rom: PathBuf,
+    /// Path to the ROM file or save state
+    file: PathBuf,
 
     /// Print CPU logs to stdout
     #[arg(long, default_value = "false")]
     stdout_logs: bool,
-
-    /// Log CPU state to a file
-    #[arg(long, value_name = "FILE")]
-    log_file: Option<PathBuf>,
 
     /// Don't sleep between frames to force 60 fps
     #[arg(long, default_value = "false")]
@@ -70,18 +65,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.scale == 0 {
         return Err("scale value must be > 0".into());
     }
-    let rom = std::fs::read(args.rom)?;
-    let log_file = if let Some(log_file) = args.log_file {
-        let log = std::fs::File::create(log_file)?;
-        let log = std::io::BufWriter::new(log);
-        Some(log)
+    let contents = std::fs::read(&args.file)?;
+    let emu: gbrs::Emulator = if contents.starts_with(b"{") {
+        eprintln!("Loading from SAV file");
+        gbrs::Emulator::load_save_state(&contents, &args.file)?
     } else {
-        None
-    };
-    let cpu: cpu::Cpu = if args.skip_boot {
-        cpu::Cpu::new_post_boot(&rom, log_file, args.stdout_logs)
-    } else {
-        cpu::Cpu::new(&rom, log_file, args.stdout_logs)
+        eprintln!("Loading ROM");
+        gbrs::Emulator::for_rom(&contents, &args.file)
     };
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
@@ -171,7 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, 160, 144)?;
 
     execute_rom(
-        cpu,
+        emu,
         event_pump,
         canvas,
         texture,
@@ -184,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[allow(clippy::too_many_arguments)]
 fn execute_rom(
-    mut cpu: cpu::Cpu,
+    mut emu: gbrs::Emulator,
     mut event_pump: sdl2::EventPump,
     mut lcd_canvas: sdl2::render::Canvas<sdl2::video::Window>,
     mut lcd_texture: sdl2::render::Texture,
@@ -244,12 +234,12 @@ fn execute_rom(
                 _ => {}
             };
         }
-        cpu.mmu.set_pressed_buttons(pressed_buttons);
+        emu.set_pressed_buttons(pressed_buttons);
 
         // Execute CPU cycles for one frame
         let mut cycles_in_frame: u32 = 0;
         while cycles_in_frame < CYCLES_PER_FRAME {
-            let cycles = cpu.step();
+            let cycles = emu.step();
             cycles_in_frame += cycles as u32;
 
             if print_logs {
@@ -257,8 +247,8 @@ fn execute_rom(
                 writeln!(lock, "CPU State:")?;
                 writeln!(lock,
                 "IME: {:?} HALTED: {:?}, IE: {:?}, IF: {:?}\nA:{:02X} F:{:02X} B:{:02X} C:{:02X} D:{:02X} E:{:02X} H:{:02X} L:{:02X} SP:{:04X} PC:{:04X} PCMEM:{:02X},{:02X},{:02X},{:02X}",
-                cpu.ime, cpu.is_halted, cpu.mmu.interrupts_enabled(), cpu.mmu.interrupts_requested(), cpu.regs.a, cpu.regs.f, cpu.regs.b, cpu.regs.c, cpu.regs.d, cpu.regs.e, cpu.regs.h, cpu.regs.l, cpu.regs.sp, cpu.regs.pc, cpu.mmu.read_byte(cpu.regs.pc), cpu.mmu.read_byte(cpu.regs.pc+1), cpu.mmu.read_byte(cpu.regs.pc+2), cpu.mmu.read_byte(cpu.regs.pc+3))?;
-                let ppu = cpu.mmu.ppu_as_ref();
+                emu.cpu.ime, emu.cpu.is_halted, emu.cpu.mmu.interrupts_enabled(), emu.cpu.mmu.interrupts_requested(), emu.cpu.regs.a, emu.cpu.regs.f, emu.cpu.regs.b, emu.cpu.regs.c, emu.cpu.regs.d, emu.cpu.regs.e, emu.cpu.regs.h, emu.cpu.regs.l, emu.cpu.regs.sp, emu.cpu.regs.pc, emu.cpu.mmu.read_byte(emu.cpu.regs.pc), emu.cpu.mmu.read_byte(emu.cpu.regs.pc+1), emu.cpu.mmu.read_byte(emu.cpu.regs.pc+2), emu.cpu.mmu.read_byte(emu.cpu.regs.pc+3))?;
+                let ppu = emu.cpu.mmu.ppu_as_ref();
                 writeln!(lock, "PPU State:")?;
                 writeln!(lock, "  Mode: {:?}", ppu.mode)?;
                 writeln!(lock, "  Line: {}", ppu.line)?;
@@ -280,7 +270,7 @@ fn execute_rom(
         if should_render {
             // Update background texture
             if let Some((ref mut canvas, ref mut texture)) = background_canvas_and_texture {
-                let background = cpu.mmu.ppu_as_ref().dbg_resolve_background();
+                let background = emu.dbg_resolve_background();
                 texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
                     for (y, row) in background.iter().enumerate() {
                         for (x, &color) in row.iter().enumerate() {
@@ -297,7 +287,7 @@ fn execute_rom(
 
             // Update OAM texture
             if let Some((ref mut canvas, ref mut texture)) = obj_canvas_and_texture {
-                let oam_data = cpu.mmu.ppu_as_ref().dbg_resolve_objects();
+                let oam_data = emu.dbg_resolve_obj_layer();
                 texture.with_lock(None, |buffer: &mut [u8], _pitch: usize| {
                     for (y, row) in oam_data.iter().enumerate() {
                         for (x, &color) in row.iter().enumerate() {
@@ -314,7 +304,7 @@ fn execute_rom(
 
             // update window texture
             if let Some((ref mut canvas, ref mut texture)) = window_canvas_and_texture {
-                let window = cpu.mmu.ppu_as_ref().dbg_resolve_window();
+                let window = emu.dbg_resolve_window();
                 let window = window
                     .iter()
                     .map(|line| line.as_slice())
@@ -323,9 +313,7 @@ fn execute_rom(
             }
 
             // update main display
-            let lcd: [DisplayLine; 144] = cpu.mmu.ppu_as_ref().lcd_display;
-            let lcd: [Vec<Color>; 144] =
-                lcd.map(|line| (0..160).map(|idx| line.pixel_at(idx)).collect());
+            let lcd: [[Color; 160]; 144] = emu.resolve_display();
             let lcd: Vec<&[Color]> = lcd.iter().map(|line| line.as_slice()).collect();
             update_canvas(&mut lcd_canvas, &mut lcd_texture, &lcd)?;
         }
