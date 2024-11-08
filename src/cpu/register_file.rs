@@ -211,11 +211,11 @@ mod tests {
         use Flag::*;
         let mut regs = Registers::create();
         for flag in [Z, N, H, C] {
-            assert_eq!(regs.flag(flag), false);
+            assert!(!regs.flag(flag));
             regs.set_flag(flag, true);
             assert!(regs.flag(flag));
             regs.set_flag(flag, false);
-            assert_eq!(regs.flag(flag), false);
+            assert!(!regs.flag(flag));
         }
     }
 }

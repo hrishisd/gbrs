@@ -14,7 +14,7 @@ use core::panic;
 use joypad::Button;
 
 #[typetag::serde(tag = "memorybus")]
-pub trait MemoryBus {
+pub trait Memory {
     fn read_byte(&self, addr: u16) -> u8;
     fn write_byte(&mut self, addr: u16, byte: u8);
     fn step(&mut self, t_cycles: u8);
@@ -105,17 +105,10 @@ impl Mmu {
             pressed_buttons: EnumSet::empty(),
         }
     }
-
-    pub fn new_post_boot(rom: &[u8]) -> Self {
-        Mmu {
-            in_boot_rom: false,
-            ..Mmu::new(rom)
-        }
-    }
 }
 
 #[typetag::serde]
-impl MemoryBus for Mmu {
+impl Memory for Mmu {
     fn read_byte(&self, addr: u16) -> u8 {
         match addr {
             // ROM
@@ -628,7 +621,7 @@ mod tests {
     #[test]
     fn oam_memory_rw() {
         let mut mmu = Mmu::new(&[0; 0x8000]);
-        for addr in 0xFE00..=0xFe9F {
+        for addr in 0xFE00..=0xFE9F {
             assert_eq!(mmu.read_byte(addr), 0);
         }
         let obj_addr = 0xFE04;

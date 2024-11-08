@@ -4,7 +4,7 @@
 mod cartridge;
 pub mod cpu;
 pub mod joypad;
-mod mmu;
+pub mod mmu;
 pub mod ppu;
 mod timer;
 mod util;
@@ -18,13 +18,14 @@ use std::{
 use twox_hash::xxh3;
 
 use enumset::EnumSet;
+use mmu::Memory;
 pub use ppu::Color;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Emulator {
     // TODO: make this private and make a pub function that returns debug info instead
-    pub cpu: cpu::Cpu,
+    pub cpu: cpu::Cpu<mmu::Mmu>,
     rom_name: String,
     #[serde(skip)]
     save_dir: PathBuf,
@@ -41,7 +42,7 @@ impl Emulator {
             .to_string();
         eprintln!("Rom name: {:?}", rom_path);
         let save_dir = rom_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let cpu = cpu::Cpu::new(rom, false);
+        let cpu = cpu::Cpu::new(mmu::Mmu::new(rom), false);
         Self {
             cpu,
             rom_name,

@@ -2,7 +2,7 @@ use opcode::{RstVec, CC};
 use register_file::{Registers, R16, R8};
 use serde::{Deserialize, Serialize};
 
-use crate::mmu::{InterruptKind, MemoryBus, Mmu};
+use crate::mmu::{InterruptKind, Memory};
 
 mod opcode;
 mod register_file;
@@ -15,9 +15,9 @@ pub enum ImeState {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Cpu {
+pub struct Cpu<Mem: Memory> {
     pub regs: Registers,
-    pub mmu: Box<dyn MemoryBus>,
+    pub mmu: Mem,
     /// AKA, the `IME` flag.
     ///
     /// `IME` is the main switch to enable/disable all interrupts. `IE` is more granular, and enables/disables interrupts individually depending on which bits are set.
@@ -26,35 +26,11 @@ pub struct Cpu {
     print_cpu_logs: bool,
 }
 
-impl Cpu {
-    pub fn new(rom: &[u8], print_cpu_logs: bool) -> Self {
+impl<Mem: Memory> Cpu<Mem> {
+    pub fn new(mmu: Mem, print_cpu_logs: bool) -> Self {
         let mut cpu = Cpu {
             regs: Registers::create(),
-            mmu: Box::new(Mmu::new(rom)),
-            ime: ImeState::Disabled,
-            is_halted: false,
-            print_cpu_logs,
-        };
-        cpu.log_state();
-        cpu
-    }
-
-    /// Initializes the CPU's state to the state it should have immediately after executing the boot ROM
-    pub fn new_post_boot(test_rom: &[u8], print_cpu_logs: bool) -> Self {
-        let mut cpu = Cpu {
-            regs: Registers {
-                a: 0x01,
-                f: 0xB0,
-                b: 0x00,
-                c: 0x13,
-                d: 0x00,
-                e: 0xD8,
-                h: 0x01,
-                l: 0x4D,
-                sp: 0xFFFE,
-                pc: 0x0100,
-            },
-            mmu: Box::new(Mmu::new_post_boot(test_rom)),
+            mmu,
             ime: ImeState::Disabled,
             is_halted: false,
             print_cpu_logs,
@@ -148,7 +124,6 @@ impl Cpu {
             0xFB => self.ei(),
             0xCB => {
                 let opcode = self.mmu.read_byte(self.regs.pc);
-                // self.regs.pc += 1;
                 self.regs.pc = self.regs.pc.wrapping_add(1);
                 match opcode {
                     // rlc
@@ -717,7 +692,7 @@ impl Cpu {
 
 #[cfg(test)]
 mod test {
-    use crate::mmu::MemoryBus;
+    use crate::mmu::{Memory, Mmu};
     use serde_big_array::BigArray;
 
     use super::Cpu;
@@ -732,7 +707,7 @@ mod test {
     #[test]
     fn run_boot_rom() {
         let boot_rom = include_bytes!("../roms/dmg_boot.bin");
-        let mut cpu = Cpu::new(boot_rom, false);
+        let mut cpu = Cpu::new(Mmu::new(boot_rom), false);
         while cpu.regs.pc != 0x100 {
             cpu.step();
         }
@@ -758,9 +733,6 @@ mod test {
         l: u8,
         pc: u16,
         sp: u16,
-        // ime: u8,
-        // #[serde(default)]
-        // ie: u8,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -777,8 +749,16 @@ mod test {
         memory: [u8; 0x10000],
     }
 
+    impl ByteArrayMmu {
+        fn new() -> Self {
+            ByteArrayMmu {
+                memory: [0; 0x10000],
+            }
+        }
+    }
+
     #[typetag::serde]
-    impl MemoryBus for ByteArrayMmu {
+    impl Memory for ByteArrayMmu {
         fn read_byte(&self, addr: u16) -> u8 {
             self.memory[addr as usize]
         }
@@ -861,12 +841,12 @@ mod test {
         }
     }
 
-    impl Cpu {
+    impl Cpu<ByteArrayMmu> {
         fn from_state(state: &Sm83State) -> Self {
-            let mut cpu = Cpu::new(&[0x00; 0x8000], false);
-            cpu.mmu = Box::new(ByteArrayMmu {
+            let mut cpu = Cpu::new(ByteArrayMmu::new(), false);
+            cpu.mmu = ByteArrayMmu {
                 memory: [0; 0x10000],
-            });
+            };
 
             cpu.regs.a = state.cpu_state.a;
             cpu.regs.f = state.cpu_state.f;

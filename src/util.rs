@@ -82,10 +82,10 @@ mod tests {
 
     #[test]
     fn get_bit_by_idx() {
-        assert_eq!(3.bit(0), true);
-        assert_eq!(3.bit(1), true);
+        assert!(3.bit(0));
+        assert!(3.bit(1));
         for i in 2..8 {
-            assert_eq!(3.bit(i), false);
+            assert!(!(3.bit(i)));
         }
     }
 }

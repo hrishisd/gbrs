@@ -20,14 +20,11 @@ const FPS: u32 = 60;
 const CYCLES_PER_FRAME: u32 = SPEED_MOD * CYCLES_PER_SECOND / FPS;
 const NANOS_PER_FRAME: u64 = 1_000_000_000 / FPS as u64;
 const FRAME_DURATION: time::Duration = time::Duration::from_nanos(NANOS_PER_FRAME);
+use gbrs::mmu::Memory;
 
 /// A Game Boy emulator
 #[derive(Parser, Debug)]
-#[command(
-    version = "0",
-    author = "Hrishi Dharam",
-    about = "My Game Boy emulator"
-)]
+#[command(version = "0", author = "Hrishi Dharam", about = "A Game Boy emulator")]
 struct Cli {
     /// Path to the ROM file
     rom_path: PathBuf,
@@ -36,17 +33,9 @@ struct Cli {
     #[arg(long)]
     save: Option<PathBuf>,
 
-    /// Print CPU logs to stdout
-    #[arg(long, default_value = "false")]
-    stdout_logs: bool,
-
     /// Don't sleep between frames (runs beyond 60 fps)
     #[arg(long, default_value = "false")]
     no_sleep: bool,
-
-    /// Initialize the CPU as if the boot ROM executed successfully
-    #[arg(long, default_value = "false")]
-    skip_boot: bool,
 
     /// Show the gameboy ppu window state in a separate window for debugging
     #[arg(long, default_value = "false")]

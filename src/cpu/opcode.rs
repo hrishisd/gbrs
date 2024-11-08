@@ -1,3 +1,5 @@
+use crate::mmu::Memory;
+
 use super::{
     register_file::{Flag, R16, R8},
     Cpu, ImeState,
@@ -29,7 +31,7 @@ pub enum CC {
 /// Implementation of the unique types of cpu instructions.
 ///
 /// Each function simulates the execution of an instruction and returns the number of T-cycles it takes. e.g. [Cpu::nop] returns 4.
-impl Cpu {
+impl<M: Memory> Cpu<M> {
     // --- utility functions ---
     /// Fetch the 8-bit immediate that follows the opcode, and advance PC.
     fn fetch_imm8(&mut self) -> u8 {
@@ -1118,9 +1120,12 @@ mod tests {
     use proptest::{prop_assert_eq, proptest};
     const FAKE_ROM: [u8; 0x8000] = [0; 0x8000];
 
-    use crate::cpu::{
-        register_file::{Flag, R8},
-        Cpu, ImeState,
+    use crate::{
+        cpu::{
+            register_file::{Flag, R8},
+            Cpu, ImeState,
+        },
+        mmu::{Memory, Mmu},
     };
 
     #[test]
@@ -1137,7 +1142,7 @@ mod tests {
         // NOP
         // NOP
         // ...
-        let mut cpu = Cpu::new(&program, false);
+        let mut cpu = Cpu::new(Mmu::new(&program), false);
         cpu.mmu.set_not_in_boot_rom();
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
@@ -1161,7 +1166,7 @@ mod tests {
         // EI
         // DI
         // NOP
-        let mut cpu = Cpu::new(&program, false);
+        let mut cpu = Cpu::new(Mmu::new(&program), false);
         cpu.mmu.set_not_in_boot_rom();
         assert_eq!(cpu.ime, Disabled);
         cpu.step();
@@ -1177,7 +1182,7 @@ mod tests {
         #[test]
         fn sub_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM, false);
+            let mut cpu= Cpu::new(Mmu::new(&FAKE_ROM), false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1193,7 +1198,7 @@ mod tests {
         #[test]
         fn xor_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM,false);
+            let mut cpu= Cpu::new(Mmu::new(&FAKE_ROM),false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1209,7 +1214,7 @@ mod tests {
         #[test]
         fn or_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM, false);
+            let mut cpu= Cpu::new(Mmu::new(&FAKE_ROM), false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1225,7 +1230,7 @@ mod tests {
         #[test]
         fn and_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM, false);
+            let mut cpu= Cpu::new(Mmu::new(&FAKE_ROM), false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
@@ -1241,7 +1246,7 @@ mod tests {
         #[test]
         fn cp_a_a(a: u8, init_flags: bool) {
             use Flag::*;
-            let mut cpu = Cpu::new(&FAKE_ROM,false);
+            let mut cpu= Cpu::new(Mmu::new(&FAKE_ROM),false);
             for flag in [Z, N, H, C] {
                 cpu.regs.set_flag(flag, init_flags);
             }
