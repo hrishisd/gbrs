@@ -757,7 +757,6 @@ mod test {
         }
     }
 
-    #[typetag::serde]
     impl Memory for ByteArrayMmu {
         fn read_byte(&self, addr: u16) -> u8 {
             self.memory[addr as usize]

@@ -33,7 +33,7 @@ pub struct Emulator {
 }
 
 impl Emulator {
-    pub fn for_rom(rom: &[u8], rom_path: &PathBuf) -> Self {
+    pub fn for_rom(rom: &[u8], rom_path: &Path) -> Self {
         let rom_name = rom_path
             .file_stem()
             .and_then(|path| path.to_str())
@@ -55,8 +55,9 @@ impl Emulator {
         save_state_path: &Path,
         save_state: &[u8],
     ) -> Result<Self, Box<dyn Error>> {
+        let save_state = zstd::decode_all(save_state)?;
         let mut emu: Emulator =
-            rmp_serde::from_slice(save_state).context("Error while deserializing emulator sav")?;
+            rmp_serde::from_slice(&save_state).context("Error while deserializing emulator sav")?;
         if xxh3::hash64(rom) != emu.rom_hash {
             return Err("The provided ROM does not match the hash in the save state. This is not the correct ROM for the save.".into());
         }
@@ -70,13 +71,14 @@ impl Emulator {
     }
 
     pub fn dump_save_state(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let file_name = format!("{}.sav", self.rom_name);
+        let file_name = format!("{}.sav.zst", self.rom_name);
         let save_file_path = self.save_dir.join(&file_name);
         let sav_file = File::create(save_file_path)?;
         eprintln!("Saving to {}", &file_name);
         let mut writer = BufWriter::new(sav_file);
         let bytes = rmp_serde::to_vec(self)?;
-        writer.write_all(&bytes)?;
+        let compressed_bytes = zstd::encode_all(std::io::Cursor::new(&bytes), 0)?;
+        writer.write_all(&compressed_bytes)?;
         Ok(())
     }
 

@@ -13,7 +13,6 @@ use cartridge::Cartridge;
 use core::panic;
 use joypad::Button;
 
-#[typetag::serde(tag = "memorybus")]
 pub trait Memory {
     fn read_byte(&self, addr: u16) -> u8;
     fn write_byte(&mut self, addr: u16, byte: u8);
@@ -107,7 +106,6 @@ impl Mmu {
     }
 }
 
-#[typetag::serde]
 impl Memory for Mmu {
     fn read_byte(&self, addr: u16) -> u8 {
         match addr {
