@@ -1,12 +1,14 @@
 use std::time::{Duration, SystemTime};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_big_array::BigArray;
 
 #[typetag::serde(tag = "cartridge")]
 pub trait Cartridge {
     fn read(&self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, byte: u8);
+    /// When loading the cartridge state from a save file, use this to set the rom data in the cartridge
+    fn set_rom(&mut self, rom: &[u8]);
 }
 
 /// Small games of not more than 32 KiB ROM do not require a MBC chip for ROM banking.
@@ -14,12 +16,28 @@ pub trait Cartridge {
 /// Optionally up to 8 KiB of RAM could be connected at $A000-BFFF.
 #[derive(Serialize, Deserialize)]
 pub struct NoMbc {
-    #[serde(with = "BigArray")]
+    #[serde(
+        serialize_with = "skip_serializing_rom",
+        deserialize_with = "create_default_rom"
+    )]
     rom: [u8; 0x8000],
     #[serde(with = "BigArray")]
     ext_ram: [u8; 0x2000],
 }
 
+fn skip_serializing_rom<S>(_: &[u8; 0x8000], s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_none()
+}
+
+fn create_default_rom<'de, D>(_: D) -> Result<[u8; 0x8000], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok([0; 0x8000])
+}
 impl NoMbc {
     pub fn from_game_rom(rom: &[u8]) -> Self {
         assert!(
@@ -52,10 +70,22 @@ impl Cartridge for NoMbc {
             _ => panic!("Invalid cartridge memory access: {:0X}", addr),
         }
     }
+
+    fn set_rom(&mut self, rom: &[u8]) {
+        assert_eq!(
+            rom.len(),
+            self.rom.len(),
+            "incorrect ROM length for MBC 1. Expected {}, got {}",
+            self.rom.len(),
+            rom.len()
+        );
+        self.rom.copy_from_slice(rom);
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Mbc1 {
+    #[serde(skip)]
     rom_banks: Vec<RomBank>,
     rom_bank_idx: usize,
     ram_banks: Vec<RamBank>,
@@ -63,24 +93,32 @@ pub struct Mbc1 {
     ram_enable: bool,
 }
 
+fn parse_banks(rom: &[u8]) -> Vec<RomBank> {
+    let rom_size_byte = rom[0x0148];
+    assert!((0x00..=0x08).contains(&rom_size_byte));
+    let num_banks = 2 * (1 << rom_size_byte);
+    let mut rom_banks = vec![RomBank([0; 0x4000]); num_banks];
+    assert_eq!(
+        rom.len(),
+        num_banks * (0x4000),
+        "ROM should be num banks * 16 KiB"
+    );
+    for idx in 0..rom_banks.len() {
+        let bank_size = 0x4000;
+        rom_banks[idx]
+            .0
+            .copy_from_slice(&rom[idx * bank_size..((idx + 1) * bank_size)]);
+    }
+    rom_banks
+}
+
 impl Mbc1 {
     pub fn from_game_rom(rom: &[u8]) -> Self {
-        let rom_size_byte = rom[0x0148];
-        assert!((0x00..=0x08).contains(&rom_size_byte));
-        let num_banks = 2 * (1 << rom_size_byte);
-        let mut rom_banks = vec![RomBank([0; 0x4000]); num_banks];
-        assert_eq!(
-            rom.len(),
-            num_banks * (0x4000),
-            "ROM should be num banks * 16 KiB"
+        let rom_banks = parse_banks(rom);
+        assert!(
+            rom_banks.len() <= 32,
+            "Only support 5 bits for ROM bank selection"
         );
-        for idx in 0..rom_banks.len() {
-            let bank_size = 0x4000;
-            rom_banks[idx]
-                .0
-                .copy_from_slice(&rom[idx * bank_size..((idx + 1) * bank_size)]);
-        }
-
         let ram_size_byte = rom[0x0149];
         let ram_banks = match ram_size_byte {
             0x00 | 0x01 => {
@@ -96,7 +134,6 @@ impl Mbc1 {
                 panic!("Unexpected RAM size for MBC 1: {:X}", ram_size_byte)
             }
         };
-        assert!((0x00..=0x08).contains(&rom_size_byte));
         Mbc1 {
             rom_banks,
             ram_banks,
@@ -155,6 +192,11 @@ impl Cartridge for Mbc1 {
             }
             _ => panic!("Illegal write to cartridge: {} <- {}", addr, byte),
         }
+    }
+
+    fn set_rom(&mut self, rom: &[u8]) {
+        let banks = parse_banks(rom);
+        self.rom_banks = banks;
     }
 }
 
@@ -224,6 +266,7 @@ impl RealTimeClockRegisters {
 
 #[derive(Serialize, Deserialize)]
 pub struct Mbc3 {
+    #[serde(skip)]
     rom_banks: Vec<RomBank>,
     rom_bank_idx: usize,
     ram_banks: Vec<RamBank>,
@@ -393,6 +436,11 @@ impl Cartridge for Mbc3 {
             }
             _ => panic!("Illegal write to cartridge: {} <- {}", addr, byte),
         }
+    }
+
+    fn set_rom(&mut self, rom: &[u8]) {
+        let banks = parse_banks(rom);
+        self.rom_banks = banks;
     }
 }
 

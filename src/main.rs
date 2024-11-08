@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{self};
@@ -28,14 +29,18 @@ const FRAME_DURATION: time::Duration = time::Duration::from_nanos(NANOS_PER_FRAM
     about = "My Game Boy emulator"
 )]
 struct Cli {
-    /// Path to the ROM file or save state
-    file: PathBuf,
+    /// Path to the ROM file
+    rom_path: PathBuf,
+
+    /// Optional path to save state
+    #[arg(long)]
+    save: Option<PathBuf>,
 
     /// Print CPU logs to stdout
     #[arg(long, default_value = "false")]
     stdout_logs: bool,
 
-    /// Don't sleep between frames to force 60 fps
+    /// Don't sleep between frames (runs beyond 60 fps)
     #[arg(long, default_value = "false")]
     no_sleep: bool,
 
@@ -65,13 +70,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.scale == 0 {
         return Err("scale value must be > 0".into());
     }
-    let contents = std::fs::read(&args.file)?;
-    let emu: gbrs::Emulator = if contents.starts_with(b"{") {
-        eprintln!("Loading from SAV file");
-        gbrs::Emulator::load_save_state(&contents, &args.file)?
-    } else {
-        eprintln!("Loading ROM");
-        gbrs::Emulator::for_rom(&contents, &args.file)
+    let rom = std::fs::read(&args.rom_path)
+        .context(format!("Unable to read ROM: {:?}", args.rom_path))?;
+    let emu = match &args.save {
+        Some(sav_path) => {
+            let sav = std::fs::read(sav_path)
+                .context(format!("Unable to read sav file: {:?}", sav_path))?;
+            gbrs::Emulator::load_save_state(&rom, sav_path, &sav)?
+        }
+        None => gbrs::Emulator::for_rom(&rom, &args.rom_path),
     };
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;

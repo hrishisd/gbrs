@@ -795,24 +795,28 @@ mod test {
         fn interrupts_requested(&self) -> enumset::EnumSet<crate::mmu::InterruptKind> {
             EnumSet::empty()
         }
+        fn clear_requested_interrupt(&mut self, _interrupt: crate::mmu::InterruptKind) {
+            unimplemented!()
+        }
         fn pressed_buttons(&self) -> enumset::EnumSet<crate::joypad::Button> {
-            todo!()
+            unimplemented!()
         }
         fn set_pressed_buttons(&mut self, _buttons: enumset::EnumSet<crate::joypad::Button>) {
-            todo!()
+            unimplemented!()
         }
         fn in_boot_rom(&self) -> bool {
-            todo!()
+            unimplemented!()
         }
         fn set_not_in_boot_rom(&mut self) {
-            todo!()
-        }
-        fn ppu_as_ref(&self) -> &crate::ppu::Ppu {
-            todo!()
+            unimplemented!()
         }
 
-        fn clear_requested_interrupt(&mut self, _interrupt: crate::mmu::InterruptKind) {
-            todo!()
+        fn ppu_as_ref(&self) -> &crate::ppu::Ppu {
+            unimplemented!()
+        }
+
+        fn set_cart_rom(&mut self, _rom: &[u8]) {
+            unimplemented!()
         }
     }
 

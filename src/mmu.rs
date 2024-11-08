@@ -40,6 +40,8 @@ pub trait MemoryBus {
         self.write_byte(addr, lo);
         self.write_byte(addr + 1, hi);
     }
+
+    fn set_cart_rom(&mut self, rom: &[u8]);
 }
 
 #[derive(Serialize, Deserialize)]
@@ -555,6 +557,9 @@ impl MemoryBus for Mmu {
 
     fn clear_requested_interrupt(&mut self, interrupt: InterruptKind) {
         self.interrupts_requested.remove(interrupt);
+    }
+    fn set_cart_rom(&mut self, rom: &[u8]) {
+        self.cartridge.set_rom(rom);
     }
 }
 

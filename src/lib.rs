@@ -8,11 +8,14 @@ mod mmu;
 pub mod ppu;
 mod timer;
 mod util;
+use anyhow::Context;
 use std::{
+    error::Error,
     fs::File,
-    io::BufWriter,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
+use twox_hash::xxh3;
 
 use enumset::EnumSet;
 pub use ppu::Color;
@@ -25,6 +28,7 @@ pub struct Emulator {
     rom_name: String,
     #[serde(skip)]
     save_dir: PathBuf,
+    rom_hash: u64,
 }
 
 impl Emulator {
@@ -37,24 +41,31 @@ impl Emulator {
             .to_string();
         eprintln!("Rom name: {:?}", rom_path);
         let save_dir = rom_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let cpu = cpu::Cpu::new(&rom, false);
+        let cpu = cpu::Cpu::new(rom, false);
         Self {
             cpu,
             rom_name,
             save_dir,
+            rom_hash: xxh3::hash64(rom),
         }
     }
 
     pub fn load_save_state(
+        rom: &[u8],
+        save_state_path: &Path,
         save_state: &[u8],
-        save_state_path: &PathBuf,
-    ) -> Result<Self, serde_json::Error> {
-        let mut emu: Emulator = serde_json::from_slice(&save_state)?;
+    ) -> Result<Self, Box<dyn Error>> {
+        let mut emu: Emulator =
+            rmp_serde::from_slice(save_state).context("Error while deserializing emulator sav")?;
+        if xxh3::hash64(rom) != emu.rom_hash {
+            return Err("The provided ROM does not match the hash in the save state. This is not the correct ROM for the save.".into());
+        }
         let save_dir = save_state_path
             .parent()
             .unwrap_or(Path::new("."))
             .to_path_buf();
         emu.save_dir = save_dir;
+        emu.cpu.mmu.set_cart_rom(rom);
         Ok(emu)
     }
 
@@ -64,8 +75,9 @@ impl Emulator {
         let save_file_path = self.save_dir.join(&file_name);
         let sav_file = File::create(save_file_path)?;
         eprintln!("Saving to {}", &file_name);
-        let writer = BufWriter::new(sav_file);
-        serde_json::to_writer(writer, self)?;
+        let mut writer = BufWriter::new(sav_file);
+        let bytes = rmp_serde::to_vec(self)?;
+        writer.write_all(&bytes)?;
         Ok(())
     }
 
