@@ -34,13 +34,12 @@ pub struct Emulator {
 
 impl Emulator {
     pub fn for_rom(rom: &[u8], rom_path: &PathBuf) -> Self {
-        eprintln!("Rom path: {:?}", rom_path);
         let rom_name = rom_path
             .file_stem()
             .and_then(|path| path.to_str())
             .expect("Illegal ROM file name")
             .to_string();
-        eprintln!("Rom name: {:?}", rom_path);
+        eprintln!("Rom name: {:?}", rom_name);
         let save_dir = rom_path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let cpu = cpu::Cpu::new(mmu::Mmu::new(rom), false);
         Self {
@@ -71,8 +70,7 @@ impl Emulator {
     }
 
     pub fn dump_save_state(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let now = chrono::Local::now();
-        let file_name = format!("{}-{}.sav", self.rom_name, now);
+        let file_name = format!("{}.sav", self.rom_name);
         let save_file_path = self.save_dir.join(&file_name);
         let sav_file = File::create(save_file_path)?;
         eprintln!("Saving to {}", &file_name);
