@@ -6,13 +6,12 @@ pub mod cpu;
 pub mod joypad;
 pub mod mmu;
 pub mod ppu;
+use chrono;
 mod timer;
 mod util;
 use anyhow::Context;
 use std::{
     error::Error,
-    fs::File,
-    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 use twox_hash::xxh3;
@@ -39,8 +38,12 @@ impl Emulator {
             .and_then(|path| path.to_str())
             .expect("Illegal ROM file name")
             .to_string();
-        eprintln!("Rom name: {:?}", rom_name);
-        let save_dir = rom_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let save_dir = rom_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(&rom_name)
+            .to_path_buf();
+        eprintln!("Will put save files in {:?}", save_dir);
         let cpu = cpu::Cpu::new(mmu::Mmu::new(rom), false);
         Self {
             cpu,
@@ -71,14 +74,19 @@ impl Emulator {
     }
 
     pub fn dump_save_state(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let file_name = format!("{}.sav.zst", self.rom_name);
+        // create save dir if it doesn't exist
+        std::fs::create_dir_all(&self.save_dir).context("Failed to create save dir")?;
+        let file_name = format!(
+            "{}.sav.zst",
+            chrono::Local::now().format("%Y-%m-%d-%H:%M:%S")
+        );
         let save_file_path = self.save_dir.join(&file_name);
-        let sav_file = File::create(save_file_path)?;
         eprintln!("Saving to {}", &file_name);
-        let mut writer = BufWriter::new(sav_file);
-        let bytes = rmp_serde::to_vec(self)?;
-        let compressed_bytes = zstd::encode_all(std::io::Cursor::new(&bytes), 0)?;
-        writer.write_all(&compressed_bytes)?;
+        let bytes = rmp_serde::to_vec(self)
+            .context("Failed to serialize emulator state with message pack protocol")?;
+        let compressed_bytes = zstd::encode_all(std::io::Cursor::new(&bytes), 0)
+            .context("Failed to compress with zstd")?;
+        std::fs::write(save_file_path, compressed_bytes)?;
         Ok(())
     }
 
