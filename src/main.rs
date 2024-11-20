@@ -15,9 +15,8 @@ use gbrs::Color;
 
 /// CPU frequency from pandocs: https://gbdev.io/pandocs/Specifications.html#dmg_clk
 const CYCLES_PER_SECOND: u32 = 4194304;
-const SPEED_MOD: u32 = 1;
 const FPS: u32 = 60;
-const CYCLES_PER_FRAME: u32 = SPEED_MOD * CYCLES_PER_SECOND / FPS;
+const CYCLES_PER_FRAME: u32 = CYCLES_PER_SECOND / FPS;
 const NANOS_PER_FRAME: u64 = 1_000_000_000 / FPS as u64;
 const FRAME_DURATION: time::Duration = time::Duration::from_nanos(NANOS_PER_FRAME);
 use gbrs::mmu::Memory;

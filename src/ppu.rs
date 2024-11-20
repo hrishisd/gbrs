@@ -8,8 +8,10 @@ use crate::{mmu::InterruptKind, util::U8Ext};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ppu {
+    #[serde(skip, default = "DisplayLine::blank_display")]
+    pub last_full_frame: [DisplayLine; 144],
     #[serde(with = "BigArray")]
-    pub lcd_display: [DisplayLine; 144],
+    lcd_display: [DisplayLine; 144],
     pub vram_tile_data: VRamTileData,
     /// At address 0x9800
     pub lo_tile_map: TileMap,
@@ -118,6 +120,7 @@ impl Ppu {
                 palette: ObjColorPaletteIdx::Zero,
             }; 40],
             lcd_display: [DisplayLine::black_line(); 144],
+            last_full_frame: [DisplayLine::black_line(); 144],
         }
     }
 
@@ -225,6 +228,7 @@ impl Ppu {
                     }
                     if self.line == 144 {
                         self.mode = Mode::VerticalBlank;
+                        self.last_full_frame = self.lcd_display;
                         interrupts |= InterruptKind::Vblank;
                         if self.lcd_status.mode_1_int_select {
                             interrupts |= InterruptKind::LcdStat;
@@ -648,6 +652,12 @@ impl Ppu {
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct DisplayLine(#[serde(with = "BigArray")] [u8; 40]);
 
+impl Default for DisplayLine {
+    fn default() -> Self {
+        DisplayLine([0; 40])
+    }
+}
+
 impl std::fmt::Debug for DisplayLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list()
@@ -657,6 +667,10 @@ impl std::fmt::Debug for DisplayLine {
 }
 
 impl DisplayLine {
+    fn blank_display() -> [DisplayLine; 144] {
+        [DisplayLine::black_line(); 144]
+    }
+
     pub fn colors(&self) -> [Color; 160] {
         let mut result = [Color::White; 160];
         for idx in 0..160 {

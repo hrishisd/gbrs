@@ -6,7 +6,6 @@ pub mod cpu;
 pub mod joypad;
 pub mod mmu;
 pub mod ppu;
-use chrono;
 mod timer;
 mod util;
 use anyhow::Context;
@@ -19,6 +18,7 @@ use twox_hash::xxh3;
 use enumset::EnumSet;
 use mmu::Memory;
 pub use ppu::Color;
+pub use ppu::Mode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -102,7 +102,7 @@ impl Emulator {
     }
 
     pub fn resolve_display(&self) -> [[Color; 160]; 144] {
-        let display = self.cpu.mmu.ppu_as_ref().lcd_display;
+        let display = self.cpu.mmu.ppu_as_ref().last_full_frame;
         display.map(|line| line.colors())
     }
 
@@ -116,5 +116,9 @@ impl Emulator {
 
     pub fn dbg_resolve_obj_layer(&self) -> [[Color; 176]; 176] {
         self.cpu.mmu.ppu_as_ref().dbg_resolve_objects()
+    }
+
+    pub fn ppu_mode(&self) -> ppu::Mode {
+        self.cpu.mmu.ppu.mode
     }
 }

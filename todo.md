@@ -16,8 +16,8 @@
 - [x] pass dmg-acid2 ppu tests (except for window internal line counter)
 - [x] support MBC1
 - [x] support MBC3
+- [x] fix screen tearing
 - [ ] implement terminal frontend
-- [ ] reduce screen tearing
 - [ ] implement web frontend
 - [ ] Do a big refactor/cleanup
 - [ ] implement the HALT bug
