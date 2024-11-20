@@ -10,7 +10,7 @@ use crate::{mmu::InterruptKind, util::U8Ext};
 pub struct Ppu {
     #[serde(skip, default = "DisplayLine::blank_display")]
     pub last_full_frame: [DisplayLine; 144],
-    #[serde(with = "BigArray")]
+    #[serde(skip, default = "DisplayLine::blank_display")]
     lcd_display: [DisplayLine; 144],
     pub vram_tile_data: VRamTileData,
     /// At address 0x9800
