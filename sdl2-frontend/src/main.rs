@@ -1,3 +1,6 @@
+use clap::Parser;
+use gbrs::mmu::Memory;
+
 use anyhow::Context;
 use std::path::PathBuf;
 use std::thread;
@@ -8,8 +11,6 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 
-use clap::Parser;
-
 use gbrs::joypad;
 use gbrs::Color;
 
@@ -19,7 +20,6 @@ const FPS: u32 = 60;
 const CYCLES_PER_FRAME: u32 = CYCLES_PER_SECOND / FPS;
 const NANOS_PER_FRAME: u64 = 1_000_000_000 / FPS as u64;
 const FRAME_DURATION: time::Duration = time::Duration::from_nanos(NANOS_PER_FRAME);
-use gbrs::mmu::Memory;
 
 /// A Game Boy emulator
 #[derive(Parser, Debug)]

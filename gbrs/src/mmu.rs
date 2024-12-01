@@ -98,7 +98,7 @@ impl Mmu {
             interrupts_requested: EnumSet::empty(),
             timer: Timer::disabled(TimerFrequency::F4KiHz),
             divider: Timer::enabled(TimerFrequency::F16KiHz),
-            boot_rom: *include_bytes!("../roms/dmg_boot.bin"),
+            boot_rom: *include_bytes!("../../roms/dmg_boot.bin"),
             in_boot_rom: true,
             joypad_select: JoypadSelect::None,
             pressed_buttons: EnumSet::empty(),

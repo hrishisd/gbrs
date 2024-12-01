@@ -1,11 +1,11 @@
+mod opcode;
+mod register_file;
+
 use opcode::{RstVec, CC};
 use register_file::{Registers, R16, R8};
 use serde::{Deserialize, Serialize};
 
 use crate::mmu::{InterruptKind, Memory};
-
-mod opcode;
-mod register_file;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImeState {
@@ -64,11 +64,11 @@ impl<Mem: Memory> Cpu<Mem> {
                     self.mmu.clear_requested_interrupt(interrupt_kind);
                     self.push_u16(self.regs.pc);
                     self.regs.pc = match interrupt_kind {
-                        Joypad => 0x60,
-                        Serial => 0x58,
-                        Timer => 0x50,
-                        LcdStat => 0x48,
-                        Vblank => 0x40,
+                        InterruptKind::Joypad => 0x60,
+                        InterruptKind::Serial => 0x58,
+                        InterruptKind::Timer => 0x50,
+                        InterruptKind::LcdStat => 0x48,
+                        InterruptKind::Vblank => 0x40,
                     };
                     self.mmu.step(20);
                     handled_interrupt = true;
@@ -706,7 +706,7 @@ mod test {
     #[ignore]
     #[test]
     fn run_boot_rom() {
-        let boot_rom = include_bytes!("../roms/dmg_boot.bin");
+        let boot_rom = include_bytes!("../../roms/dmg_boot.bin");
         let mut cpu = Cpu::new(Mmu::new(boot_rom), false);
         while cpu.regs.pc != 0x100 {
             cpu.step();
@@ -801,12 +801,12 @@ mod test {
 
     #[test]
     fn sm83_per_instruction_test() {
-        let test_dir = path::Path::new("tests/sm83/v1");
+        let test_dir = path::Path::new("sm83-tests/v1");
         let ignored_tests = [
             // STOP test
-            "tests/sm83/v1/10.json",
+            "sm83-tests/v1/10.json",
             // HALT test
-            "tests/sm83/v1/76.json",
+            "sm83-tests/v1/76.json",
         ];
         for entry in fs::read_dir(test_dir).unwrap() {
             let path = entry.unwrap().path();
@@ -822,10 +822,10 @@ mod test {
             let json = fs::read_to_string(&path).unwrap();
             let test_cases: Vec<Sm83TestCase> = serde_json::from_str(&json).unwrap();
             for case in test_cases {
-                eprintln!(
-                    "\n{:X?}\ninitial:\n\t{:X?}\nterminal:\n\t{:X?}",
-                    case.name, case.initial, case.terminal
-                );
+                // eprintln!(
+                //     "\n{:X?}\ninitial:\n\t{:X?}\nterminal:\n\t{:X?}",
+                //     case.name, case.initial, case.terminal
+                // );
                 let mut cpu = Cpu::from_state(&case.initial);
                 cpu.step();
                 if let Err(err) = cpu.verify_state(&case.terminal) {
@@ -859,7 +859,6 @@ mod test {
             cpu.regs.sp = state.cpu_state.sp;
 
             for &(addr, val) in &state.ram_state {
-                eprintln!("Writing {addr:4X} <- {val:2X}");
                 cpu.mmu.write_byte(addr, val);
             }
             cpu

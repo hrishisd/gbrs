@@ -6,6 +6,14 @@ pub mod cpu;
 pub mod joypad;
 pub mod mmu;
 pub mod ppu;
+
+extern crate anyhow;
+extern crate enumset;
+extern crate proptest;
+extern crate serde;
+extern crate serde_big_array;
+extern crate twox_hash;
+
 mod timer;
 mod util;
 use anyhow::Context;
